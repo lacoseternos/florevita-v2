@@ -1127,7 +1127,21 @@ ${forDate.length===0?`
         ${o.recipient?`<div style="font-size:12px;color:var(--muted)">👤 Para: ${o.recipient}</div>`:''}
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">📍 ${o.deliveryAddress||'Retirada'}</div>
 
-        <div style="font-size:12px;margin-bottom:10px;"><strong>Itens:</strong> ${(o.items||[]).map(i=>`${i.qty}x ${i.name}`).join(', ')}</div>
+        <!-- FOTOS DOS PRODUTOS -->
+        <div style="margin-bottom:10px;">
+          ${(o.items||[]).map(i=>{
+            const prod=S.products.find(p=>p._id===i.product||p.name===i.name);
+            return`<div style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--cream);border-radius:var(--r);margin-bottom:6px;">
+              ${prod?.images?.[0]
+                ?`<img src="${prod.images[0]}" style="width:52px;height:52px;border-radius:8px;object-fit:cover;flex-shrink:0;border:1px solid var(--border)"/>`
+                :`<div style="width:52px;height:52px;border-radius:8px;background:var(--rose-l);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">${emoji(prod?.category||'')}</div>`}
+              <div>
+                <div style="font-size:13px;font-weight:600">${i.qty}x ${i.name}</div>
+                ${prod?.productionNotes?`<div style="font-size:11px;color:var(--muted)">${prod.productionNotes}</div>`:''}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
 
         ${o.cardMessage?`
         <div style="background:var(--petal);border-radius:var(--r);padding:10px 12px;margin-bottom:10px;border-left:3px solid var(--rose);">
@@ -1623,88 +1637,147 @@ function printCard(orderId){
   const o = S.orders.find(x=>x._id===orderId);
   if(!o) return;
   const cfg = JSON.parse(localStorage.getItem('fv_config')||'{}');
-  const w = window.open('','_blank','width=400,height=300');
-  w.document.write(`
-  <html><head><title>Cartão — ${o.orderNumber}</title>
-  <style>
-    body{font-family:'Georgia',serif;padding:30px;max-width:380px;margin:0 auto;}
-    .borda{border:2px solid #C8436A;border-radius:12px;padding:24px;}
-    .logo{text-align:center;font-size:18px;color:#C8436A;font-weight:bold;margin-bottom:16px;}
-    .msg{font-size:16px;line-height:1.8;color:#1A0A10;text-align:center;font-style:italic;margin-bottom:16px;}
-    .dest{text-align:center;font-size:13px;color:#4A2038;margin-bottom:8px;}
-    .anon{text-align:center;font-size:11px;color:#9E8090;}
-    @media print{body{padding:10px}button{display:none}}
-  </style></head>
-  <body>
-  <div class="borda">
-    <div class="logo">🌺 ${cfg.razao||'Laços Eternos'}</div>
-    <div class="dest">Para: <strong>${o.recipient||'—'}</strong></div>
-    <div class="msg">"${o.cardMessage||'Com muito carinho! 🌸'}"</div>
-    ${o.identifyClient!==false?`<div class="anon">Com carinho de: ${o.client?.name||o.clientName||'—'}</div>`:'<div class="anon">💝</div>'}
-  </div>
-  <div style="text-align:center;margin-top:12px;">
-    <button onclick="window.print();window.close()" style="background:#C8436A;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;">🖨️ Imprimir</button>
-  </div>
-  </body></html>
-  `);
-  w.document.close();
+  const layout = JSON.parse(localStorage.getItem('fv_card_layout')||'{"cor":"#C8436A","fonte":"Georgia","tamanho":"16"}');
+  
+  const html = `<!DOCTYPE html>
+<html><head><title>Cartão — ${o.orderNumber}</title>
+<meta charset="utf-8"/>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'${layout.fonte||'Georgia'}',serif;background:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;}
+  .card{border:2px solid ${layout.cor||'#C8436A'};border-radius:16px;padding:32px;max-width:360px;width:100%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.1);}
+  .flor{font-size:36px;margin-bottom:12px;}
+  .logo{font-size:16px;color:${layout.cor||'#C8436A'};font-weight:bold;margin-bottom:20px;letter-spacing:1px;}
+  .para{font-size:13px;color:#666;margin-bottom:6px;}
+  .dest{font-size:18px;font-weight:bold;color:#1A0A10;margin-bottom:20px;}
+  .msg{font-size:${layout.tamanho||'16'}px;line-height:1.8;color:#2D1A20;font-style:italic;margin-bottom:20px;padding:16px;background:#FDF4F7;border-radius:8px;}
+  .de{font-size:13px;color:#9E8090;margin-top:16px;}
+  .btn{display:block;margin:20px auto 0;background:${layout.cor||'#C8436A'};color:#fff;border:none;padding:10px 28px;border-radius:8px;font-size:14px;cursor:pointer;}
+  @media print{.btn{display:none!important}body{min-height:auto}}
+</style></head>
+<body>
+<div class="card">
+  <div class="flor">🌺</div>
+  <div class="logo">${cfg.razao||'Laços Eternos'}</div>
+  <div class="para">Para:</div>
+  <div class="dest">${o.recipient||'—'}</div>
+  <div class="msg">"${(o.cardMessage||'Com muito carinho! 🌸').replace(/"/g,'&quot;')}"</div>
+  ${o.identifyClient!==false?`<div class="de">💌 Com carinho de: <strong>${o.client?.name||o.clientName||'—'}</strong></div>`:'<div class="de">💝</div>'}
+</div>
+<button class="btn" onclick="window.print()">🖨️ Imprimir Cartão</button>
+</body></html>`;
+
+  const blob = new Blob([html], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  
   S._printedCard = {...(S._printedCard||{}), [orderId]:true};
   render();
+  toast('✅ Cartão aberto para impressão!');
 }
 
 function printComanda(orderId){
   const o = S.orders.find(x=>x._id===orderId);
   if(!o) return;
   const cfg = JSON.parse(localStorage.getItem('fv_config')||'{}');
-  const w = window.open('','_blank','width=500,height=600');
-  w.document.write(`
-  <html><head><title>Comanda — ${o.orderNumber}</title>
-  <style>
-    body{font-family:'Arial',sans-serif;padding:20px;max-width:480px;margin:0 auto;font-size:13px;}
-    h2{color:#C8436A;border-bottom:2px solid #C8436A;padding-bottom:8px;}
-    .row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed #ddd;}
-    .label{color:#666;font-size:12px;}
-    .val{font-weight:600;}
-    .items{background:#f9f9f9;padding:10px;border-radius:6px;margin:10px 0;}
-    .msg-cartao{background:#FDF4F7;border-left:3px solid #C8436A;padding:10px;margin:10px 0;font-style:italic;}
-    .footer{text-align:center;margin-top:20px;font-size:11px;color:#999;}
-    @media print{button{display:none}}
-  </style></head>
-  <body>
-  <h2>🚚 Comanda de Entrega</h2>
-  <div class="row"><span class="label">Pedido</span><span class="val">${o.orderNumber}</span></div>
-  <div class="row"><span class="label">Data Emissão</span><span class="val">${new Date().toLocaleString('pt-BR')}</span></div>
-  <div class="row"><span class="label">Data Entrega</span><span class="val">${o.scheduledDate?new Date(o.scheduledDate).toLocaleDateString('pt-BR'):'—'} ${o.scheduledPeriod||''} ${o.scheduledTime||''}</span></div>
-  <div class="row"><span class="label">Cliente</span><span class="val">${o.client?.name||o.clientName||'—'}</span></div>
+  
+  // Build items with photos (using img tags with crossorigin)
+  const itemsHtml = (o.items||[]).map(i=>{
+    const prod = S.products.find(p=>p._id===i.product||p.name===i.name);
+    const imgHtml = prod?.images?.[0] 
+      ? `<img src="${prod.images[0]}" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid #ddd;flex-shrink:0"/>`
+      : `<div style="width:60px;height:60px;border-radius:6px;background:#F5D6E0;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">🌸</div>`;
+    return `<div style="display:flex;align-items:center;gap:12px;padding:8px;background:#f9f9f9;border-radius:6px;margin-bottom:6px;">
+      ${imgHtml}
+      <div>
+        <div style="font-weight:bold;font-size:13px">${i.qty}x ${i.name}</div>
+        <div style="font-size:12px;color:#666">R$ ${(i.totalPrice||0).toFixed(2).replace('.',',')}</div>
+        ${prod?.productionNotes?`<div style="font-size:11px;color:#999">${prod.productionNotes}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html><head><title>Comanda — ${o.orderNumber}</title>
+<meta charset="utf-8"/>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Arial',sans-serif;padding:20px;max-width:520px;margin:0 auto;font-size:13px;color:#1A0A10;}
+  h2{color:#C8436A;border-bottom:3px solid #C8436A;padding-bottom:10px;margin-bottom:16px;font-size:18px;}
+  .row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #eee;}
+  .label{color:#666;font-size:12px;}
+  .val{font-weight:600;text-align:right;max-width:60%;}
+  .section{margin:14px 0;}
+  .section-title{font-weight:bold;font-size:13px;color:#C8436A;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;}
+  .msg-cartao{background:#FDF4F7;border-left:4px solid #C8436A;padding:12px;border-radius:0 8px 8px 0;font-style:italic;margin:10px 0;}
+  .obs{background:#FFF8E1;border-left:4px solid #B7860F;padding:10px;border-radius:0 8px 8px 0;margin:8px 0;}
+  .total-row{display:flex;justify-content:space-between;padding:10px 0;font-size:18px;font-weight:bold;border-top:2px solid #C8436A;margin-top:10px;}
+  .footer{text-align:center;margin-top:20px;font-size:11px;color:#999;border-top:1px dashed #ddd;padding-top:12px;}
+  .btn{display:block;margin:16px auto 0;background:#C8436A;color:#fff;border:none;padding:10px 28px;border-radius:8px;font-size:14px;cursor:pointer;}
+  @media print{.btn{display:none!important}}
+</style></head>
+<body>
+<h2>🚚 Comanda de Entrega — ${o.orderNumber}</h2>
+
+<div class="section">
+  <div class="row"><span class="label">Emissão</span><span class="val">${new Date().toLocaleString('pt-BR')}</span></div>
+  <div class="row"><span class="label">Entrega</span><span class="val">${o.scheduledDate?new Date(o.scheduledDate).toLocaleDateString('pt-BR'):'—'} · ${o.scheduledPeriod||'—'} ${o.scheduledTime||''}</span></div>
+  <div class="row"><span class="label">Tipo</span><span class="val">${o.type||'—'}</span></div>
+</div>
+
+<div class="section">
+  <div class="section-title">👤 Cliente</div>
+  <div class="row"><span class="label">Nome</span><span class="val">${o.client?.name||o.clientName||'—'}</span></div>
   <div class="row"><span class="label">WhatsApp</span><span class="val">${o.clientPhone||o.client?.phone||'—'}</span></div>
+</div>
+
+<div class="section">
+  <div class="section-title">📍 Entrega</div>
   <div class="row"><span class="label">Destinatário</span><span class="val">${o.recipient||'—'}</span></div>
   <div class="row"><span class="label">Endereço</span><span class="val">${o.deliveryAddress||'Retirada'}</span></div>
-  ${o.isCondominium?`<div class="row"><span class="label">Condomínio</span><span class="val">Bloco ${o.block} — Ap ${o.apt}</span></div>`:''}
+  ${o.isCondominium?`<div class="row"><span class="label">Condomínio</span><span class="val">Bloco ${o.block} · Ap ${o.apt}</span></div>`:''}
   ${o.deliveryReference?`<div class="row"><span class="label">Referência</span><span class="val">${o.deliveryReference}</span></div>`:''}
-  
-  <div class="items">
-    <div style="font-weight:bold;margin-bottom:6px;">📦 Itens do Pedido:</div>
-    ${(o.items||[]).map(i=>`<div style="padding:3px 0;">• ${i.qty}x ${i.name} — R$ ${(i.totalPrice||0).toFixed(2).replace('.',',')}</div>`).join('')}
-  </div>
-  
-  ${o.cardMessage?`<div class="msg-cartao">💌 Cartão: "${o.cardMessage}"<br>${o.identifyClient!==false?`<small>De: ${o.client?.name||o.clientName||'—'}</small>`:''}</div>`:''}
-  ${o.notes?`<div style="padding:8px;background:#fff3cd;border-radius:4px;margin:8px 0;">📝 Obs: ${o.notes}</div>`:''}
+</div>
 
+<div class="section">
+  <div class="section-title">📦 Produtos</div>
+  ${itemsHtml}
+</div>
+
+${o.cardMessage?`<div class="msg-cartao">💌 <strong>Cartão:</strong> "${o.cardMessage}"${o.identifyClient!==false?`<br><small style="color:#9E8090">De: ${o.client?.name||o.clientName||'—'}</small>`:''}</div>`:''}
+${o.notes?`<div class="obs">📝 <strong>Obs:</strong> ${o.notes}</div>`:''}
+
+<div class="section">
   <div class="row"><span class="label">Pagamento</span><span class="val">${o.payment||'—'}</span></div>
-  <div class="row"><span class="label">Total</span><span class="val" style="color:#C8436A;font-size:16px;">R$ ${(o.total||0).toFixed(2).replace('.',',')}</span></div>
-  
-  <div class="footer">
-    ${cfg.razao||'Laços Eternos Floricultura'} — ${cfg.whats||'(92) 99300-2433'}<br>
-    Gerado em ${new Date().toLocaleString('pt-BR')}
-  </div>
-  <div style="text-align:center;margin-top:12px;">
-    <button onclick="window.print();window.close()" style="background:#C8436A;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;">🖨️ Imprimir</button>
-  </div>
-  </body></html>
-  `);
-  w.document.close();
+  ${(o.discount||0)>0?`<div class="row"><span class="label">Desconto</span><span class="val">-R$ ${(o.discount||0).toFixed(2).replace('.',',')}</span></div>`:''}
+  ${(o.deliveryFee||0)>0?`<div class="row"><span class="label">Taxa de Entrega</span><span class="val">R$ ${(o.deliveryFee||0).toFixed(2).replace('.',',')}</span></div>`:''}
+  <div class="total-row"><span>TOTAL</span><span style="color:#C8436A">R$ ${(o.total||0).toFixed(2).replace('.',',')}</span></div>
+</div>
+
+<div class="footer">
+  ${cfg.razao||'Laços Eternos Floricultura'}<br>
+  ${cfg.whats?'📱 '+cfg.whats:''} ${cfg.addr?'· '+cfg.addr:''}<br>
+  Gerado em ${new Date().toLocaleString('pt-BR')}
+</div>
+
+<button class="btn" onclick="window.print()">🖨️ Imprimir Comanda</button>
+</body></html>`;
+
+  const blob = new Blob([html], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+
   S._printedComanda = {...(S._printedComanda||{}), [orderId]:true};
   render();
+  toast('✅ Comanda aberta para impressão!');
 }
 
 // ── ESTOQUE MODALS ───────────────────────────────────────────
@@ -1994,6 +2067,30 @@ function renderConfig(){
       <div class="fg"><label class="fl">Endereço</label><input class="fi" id="cfg-addr" value="${cfg.addr||''}" placeholder="Rua, número — Manaus/AM"/></div>
       <div class="fg"><label class="fl">E-mail</label><input class="fi" id="cfg-email" value="${cfg.email||''}" placeholder="contato@lacoseternos.com.br"/></div>
       <button class="btn btn-primary" id="btn-save-cfg">💾 Salvar Dados</button>
+    </div>
+
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">🖨️ Layout Cartão e Comanda</div>
+      ${(()=>{const l=JSON.parse(localStorage.getItem('fv_card_layout')||'{"cor":"#C8436A","fonte":"Georgia","tamanho":"16"}');return`
+      <div class="fr2">
+        <div class="fg"><label class="fl">Cor Principal</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="color" id="lay-cor" value="${l.cor||'#C8436A'}" style="width:44px;height:36px;border:1px solid var(--border);border-radius:6px;padding:2px;cursor:pointer;"/>
+            <span style="font-size:12px;color:var(--muted)">Cor dos botões e bordas</span>
+          </div>
+        </div>
+        <div class="fg"><label class="fl">Fonte do Cartão</label>
+          <select class="fi" id="lay-fonte">
+            ${['Georgia','Arial','Palatino','Times New Roman','Garamond'].map(f=>`<option value="${f}" ${l.fonte===f?'selected':''}>${f}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fg"><label class="fl">Tamanho da mensagem (px)</label>
+          <input class="fi" type="number" id="lay-tam" value="${l.tamanho||16}" min="12" max="24"/>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-sm" id="btn-save-layout">💾 Salvar Layout</button>
+      <button class="btn btn-outline btn-sm" id="btn-preview-card" style="margin-left:6px">👁️ Pré-visualizar Cartão</button>
+      `})()}
     </div>
 
     <div class="card" style="margin-bottom:14px;">
@@ -2771,6 +2868,21 @@ function bindPageActions(){
     });
     document.getElementById('btn-test-api')?.addEventListener('click',async()=>{try{const r=await fetch('https://florevita-backend.onrender.com/api/health');const d=await r.json();toast(d.db==='conectado'?'✅ Conectado!':'❌ Problema na conexão');}catch(e){toast('❌ API offline');}});
     document.getElementById('btn-sug')?.addEventListener('click',()=>{toast('💡 Sugestão enviada!');document.getElementById('sug-txt').value='';});
+    document.getElementById('btn-save-layout')?.addEventListener('click',()=>{
+      const layout={
+        cor:document.getElementById('lay-cor')?.value||'#C8436A',
+        fonte:document.getElementById('lay-fonte')?.value||'Georgia',
+        tamanho:document.getElementById('lay-tam')?.value||'16',
+      };
+      localStorage.setItem('fv_card_layout',JSON.stringify(layout));
+      toast('✅ Layout salvo!');
+    });
+    document.getElementById('btn-preview-card')?.addEventListener('click',()=>{
+      const fakeOrder={orderNumber:'#0001',recipient:'Maria Silva',cardMessage:'Feliz aniversário com muito amor e carinho! Que seu dia seja especial. 🌹',identifyClient:true,clientName:'João Silva',items:[{name:'Buquê Premium',qty:1}]};
+      S.orders.unshift(fakeOrder);
+      printCard('');
+      S.orders.shift();
+    });
     // Notif template
     document.getElementById('notif-template')?.addEventListener('input',e=>{
       const preview=document.getElementById('notif-preview');
