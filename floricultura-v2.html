@@ -232,6 +232,8 @@ const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
 let S = {
   user: null, token: null, page: 'dashboard',
   clients:[], products:[], orders:[], users:[], _userSearch:'',
+  stockMoves:[], _stockFilter:'todos', _stockUnit:'',
+  financialEntries:[], _relPeriod:'mes', _relUnit:'', _finUnit:'', _iaLoading:false,
   _userSearch:'',
   loading:false, toast:null, sidebarOpen:false,
   alerts:[], chatHistory:[],
@@ -292,8 +294,14 @@ async function doLogin(email,pass){
   }catch(e){S.loading=false;render();}
 }
 async function loadData(){
-  try{const[c,p,o,u]=await Promise.all([GET('/clients'),GET('/products'),GET('/orders'),GET('/users').catch(()=>[])]);
-  S.clients=c||[];S.products=p||[];S.orders=o||[];S.users=u||[];}catch(e){console.log(e);}
+  try{
+    const[c,p,o,u,sm]=await Promise.all([
+      GET('/clients'),GET('/products'),GET('/orders'),
+      GET('/users').catch(()=>[]),
+      GET('/stock/moves').catch(()=>[])
+    ]);
+    S.clients=c||[];S.products=p||[];S.orders=o||[];S.users=u||[];S.stockMoves=sm||[];
+  }catch(e){console.log(e);}
 }
 function toast(msg,err=false){S.toast={msg,err};render();setTimeout(()=>{S.toast=null;render();},3500);}
 function setPage(p){S.page=p;S.sidebarOpen=false;render();}
@@ -836,40 +844,103 @@ function renderProdutos(){
 
 // ── ESTOQUE ──────────────────────────────────────────────────
 function renderEstoque(){
-  const low=S.products.filter(p=>(p.stock||0)<=(p.minStock||5));
+  const low = S.products.filter(p=>(p.stock||0)<=(p.minStock||5));
+  const unit = S._stockUnit || (S.user.unit==='Todas'?'':S.user.unit);
+  const filtered = unit ? S.products.filter(p=>!p.unit||p.unit===unit||p.unit==='Todas') : S.products;
+  const totalVal = filtered.reduce((s,p)=>s+(p.costPrice||0)*(p.stock||0),0);
+  
   return`
-${low.length>0?`<div class="alert al-warn">⚠️ <div><strong>${low.length} itens críticos:</strong> ${low.map(p=>p.name).join(', ')}</div></div>`:''}
+${low.length>0?`<div class="alert al-warn">⚠️ <strong>${low.length} itens com estoque crítico:</strong> ${low.map(p=>p.name).join(', ')}</div>`:''}
+
 <div class="g4" style="margin-bottom:16px;">
-  <div class="mc rose"><div class="mc-label">Total Produtos</div><div class="mc-val">${S.products.length}</div></div>
-  <div class="mc leaf"><div class="mc-label">Normal</div><div class="mc-val">${S.products.filter(p=>(p.stock||0)>(p.minStock||5)).length}</div></div>
-  <div class="mc gold"><div class="mc-label">Crítico</div><div class="mc-val">${low.length}</div></div>
-  <div class="mc purple"><div class="mc-label">Valor Estoque</div><div class="mc-val">${$c(S.products.reduce((s,p)=>s+(p.costPrice||0)*(p.stock||0),0))}</div></div>
+  <div class="mc rose"><div class="mc-label">Total Produtos</div><div class="mc-val">${filtered.length}</div></div>
+  <div class="mc leaf"><div class="mc-label">Estoque Normal</div><div class="mc-val">${filtered.filter(p=>(p.stock||0)>(p.minStock||5)).length}</div></div>
+  <div class="mc gold"><div class="mc-label">Estoque Crítico</div><div class="mc-val">${low.length}</div></div>
+  <div class="mc purple"><div class="mc-label">Valor em Estoque</div><div class="mc-val">${$c(totalVal)}</div></div>
 </div>
+
+<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+  ${S.user.role==='Administrador'||S.user.role==='Gerente'?`
+  <select class="fi" id="stock-unit-filter" style="width:auto;">
+    <option value="">Todas as unidades</option>
+    <option value="Loja Novo Aleixo" ${unit==='Loja Novo Aleixo'?'selected':''}>Loja Novo Aleixo</option>
+    <option value="Loja Allegro Mall" ${unit==='Loja Allegro Mall'?'selected':''}>Loja Allegro Mall</option>
+    <option value="CDLE" ${unit==='CDLE'?'selected':''}>CDLE</option>
+  </select>`:''}
+  <button class="btn btn-green btn-sm" id="btn-stock-entry">📦 Entrada de Estoque</button>
+  <button class="btn btn-outline btn-sm" id="btn-stock-exit">📤 Saída Manual</button>
+  <button class="btn btn-blue btn-sm" id="btn-new-transfer">🔄 Transferência</button>
+  <button class="btn btn-ghost btn-sm" id="btn-rel-prods">🔄 Atualizar</button>
+</div>
+
 <div class="g2">
   <div class="card">
-    <div class="card-title">Posição do Estoque
-      <button class="btn btn-green btn-sm" id="btn-stock-entry">+ Entrada</button>
-    </div>
-    ${S.products.map(p=>{
-      const pct=Math.min(100,((p.stock||0)/((p.minStock||5)*3))*100);
-      const color=(p.stock||0)<=(p.minStock||5)?'#C8436A':(p.stock||0)<=(p.minStock||5)*1.5?'#B7860F':'#2D6A4F';
-      return`<div style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
-          <span style="font-weight:500">${p.name}</span>
-          <span style="color:${color};font-weight:600">${p.stock||0} <span style="color:var(--muted);font-weight:400">/ mín ${p.minStock||5}</span></span>
+    <div class="card-title">Posição do Estoque</div>
+    ${filtered.length===0?`<div class="empty"><div class="empty-icon">📦</div><p>Nenhum produto</p></div>`:''}
+    ${filtered.map(p=>{
+      const pct=Math.min(100,((p.stock||0)/Math.max((p.minStock||5)*3,1))*100);
+      const color=(p.stock||0)<=(p.minStock||5)?'var(--red)':(p.stock||0)<=(p.minStock||5)*1.5?'var(--gold)':'var(--leaf)';
+      const status=(p.stock||0)<=(p.minStock||5)?'⚠️ Crítico':(p.stock||0)<=(p.minStock||5)*1.5?'⚡ Baixo':'✅ OK';
+      return`<div style="margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:var(--r);background:#fff;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            ${p.images?.[0]?`<img src="${p.images[0]}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">`:`<span style="font-size:18px">${emoji(p.category)}</span>`}
+            <div>
+              <div style="font-size:12px;font-weight:600">${p.name}</div>
+              <div style="font-size:10px;color:var(--muted)">${p.category||'—'} · ${p.code||'—'}</div>
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:16px;font-weight:700;color:${color}">${p.stock||0}</div>
+            <div style="font-size:10px;color:var(--muted)">mín: ${p.minStock||5}</div>
+          </div>
         </div>
         <div class="pb"><div class="pf" style="width:${pct}%;background:${color}"></div></div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;">
+          <span style="font-size:10px;color:${color};font-weight:500">${status}</span>
+          <div style="display:flex;gap:4px;">
+            <button class="btn btn-ghost btn-xs" data-stock-add="${p._id}" data-stock-name="${p.name}">+ Entrada</button>
+            <button class="btn btn-ghost btn-xs" data-stock-rem="${p._id}" data-stock-name="${p.name}">− Saída</button>
+          </div>
+        </div>
       </div>`;
-    }).join('')||`<div class="empty"><p>Cadastre produtos</p></div>`}
+    }).join('')}
   </div>
-  <div class="card">
-    <div class="card-title">Transferências entre Unidades</div>
-    <div class="alert al-info">ℹ️ Transferências do CDLE para as lojas são registradas aqui.</div>
-    <button class="btn btn-primary btn-sm" id="btn-new-transfer">+ Nova Transferência</button>
-    <div style="margin-top:12px;color:var(--muted);font-size:12px">Histórico de transferências aparecerá aqui.</div>
+  
+  <div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">📋 Histórico de Movimentações
+        <div style="display:flex;gap:4px;">
+          <button class="btn btn-ghost btn-xs ${S._stockFilter==='todos'?'btn-primary':''}" data-sf="todos">Todos</button>
+          <button class="btn btn-ghost btn-xs ${S._stockFilter==='Entrada'?'btn-primary':''}" data-sf="Entrada">Entradas</button>
+          <button class="btn btn-ghost btn-xs ${S._stockFilter==='Saída'?'btn-primary':''}" data-sf="Saída">Saídas</button>
+          <button class="btn btn-ghost btn-xs ${S._stockFilter==='Transferência'?'btn-primary':''}" data-sf="Transferência">Transf.</button>
+        </div>
+      </div>
+      ${S.stockMoves.length===0?`<div class="empty"><div class="empty-icon">📋</div><p>Nenhuma movimentação ainda</p></div>`:`
+      <table><thead><tr><th>Produto</th><th>Tipo</th><th>Qtd</th><th>Unidade</th><th>Motivo</th><th>Data</th></tr></thead>
+      <tbody>${S.stockMoves
+        .filter(m=>S._stockFilter==='todos'||m.type===S._stockFilter)
+        .slice(0,20).map(m=>`<tr>
+        <td style="font-weight:500;font-size:12px">${m.product?.name||'—'}</td>
+        <td><span class="tag ${m.type==='Entrada'?'t-green':m.type==='Saída'?'t-red':'t-blue'}">${m.type}</span></td>
+        <td style="font-weight:600;color:${m.type==='Entrada'?'var(--leaf)':'var(--red)'}">${m.type==='Entrada'?'+':'−'}${m.qty}</td>
+        <td style="font-size:11px">${m.unit||'—'}</td>
+        <td style="font-size:11px;color:var(--muted)">${m.reason||'—'}</td>
+        <td style="font-size:11px;color:var(--muted)">${m.createdAt?new Date(m.createdAt).toLocaleDateString('pt-BR'):'—'}</td>
+      </tr>`).join('')}
+      </tbody></table>`}
+    </div>
+    
+    <div class="card">
+      <div class="card-title">🔄 Transferências entre Unidades</div>
+      <div class="alert al-info">Produtos transferidos do CDLE para as lojas são registrados aqui.</div>
+      <button class="btn btn-primary btn-sm" id="btn-new-transfer2">+ Nova Transferência</button>
+    </div>
   </div>
 </div>`;
 }
+
 
 // ── PRODUÇÃO ─────────────────────────────────────────────────
 function renderProducao(){
@@ -1096,35 +1167,92 @@ minhas.map((o,idx) => {
 
 // ── FINANCEIRO ───────────────────────────────────────────────
 function renderFinanceiro(){
-  const rec=S.orders.filter(o=>o.paymentStatus==='Pago').reduce((s,o)=>s+(o.total||0),0);
-  const pend=S.orders.filter(o=>o.paymentStatus!=='Pago'&&o.status!=='Cancelado').reduce((s,o)=>s+(o.total||0),0);
+  const unit = S.user.role==='Administrador'?S._finUnit||'':S.user.unit;
+  const filteredOrders = unit ? S.orders.filter(o=>o.unit===unit) : S.orders;
+  const receitas = filteredOrders.filter(o=>o.paymentStatus==='Pago').reduce((s,o)=>s+(o.total||0),0);
+  const pendente = filteredOrders.filter(o=>o.paymentStatus!=='Pago'&&o.status!=='Cancelado').reduce((s,o)=>s+(o.total||0),0);
+  const contas = S.financialEntries||[];
+  const contasPagar = contas.filter(c=>c.type==='Despesa');
+  const contasReceber = contas.filter(c=>c.type==='Receita');
+  const vencidas = contasPagar.filter(c=>c.status==='Pendente'&&c.dueDate&&new Date(c.dueDate)<new Date());
+
   return`
-<div class="g4" style="margin-bottom:16px;">
-  <div class="mc leaf"><div class="mc-label">Receita Confirmada</div><div class="mc-val">${$c(rec)}</div></div>
-  <div class="mc gold"><div class="mc-label">A Receber</div><div class="mc-val">${$c(pend)}</div></div>
-  <div class="mc rose"><div class="mc-label">Total Pedidos</div><div class="mc-val">${S.orders.length}</div></div>
-  <div class="mc purple"><div class="mc-label">Ticket Médio</div><div class="mc-val">${$c(S.orders.length?(rec+pend)/S.orders.length:0)}</div></div>
+${vencidas.length>0?`<div class="alert al-err">⚠️ <strong>${vencidas.length} conta(s) vencida(s)!</strong> ${vencidas.map(c=>c.description).join(', ')}</div>`:''}
+
+<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+  ${S.user.role==='Administrador'?`
+  <select class="fi" id="fin-unit-filter" style="width:auto;">
+    <option value="">Todas as unidades</option>
+    <option value="Loja Novo Aleixo">Loja Novo Aleixo</option>
+    <option value="Loja Allegro Mall">Loja Allegro Mall</option>
+    <option value="CDLE">CDLE</option>
+  </select>`:''}
+  <button class="btn btn-green btn-sm" id="btn-new-receita">+ Receita</button>
+  <button class="btn btn-red btn-sm" id="btn-new-despesa">+ Despesa / Conta a Pagar</button>
+  <button class="btn btn-ghost btn-sm" id="btn-rel-fin">🔄 Atualizar</button>
 </div>
-<div class="card">
-  <div class="card-title">Financeiro — ${S.user.unit==='Todas'?'Consolidado':S.user.unit}
-    <div style="display:flex;gap:6px;">
-      <button class="btn btn-green btn-sm">+ Receita</button>
-      <button class="btn btn-outline btn-sm">+ Despesa</button>
+
+<div class="g4" style="margin-bottom:16px;">
+  <div class="mc leaf"><div class="mc-label">Receita Confirmada</div><div class="mc-val">${$c(receitas)}</div></div>
+  <div class="mc gold"><div class="mc-label">A Receber</div><div class="mc-val">${$c(pendente)}</div></div>
+  <div class="mc red" style="--red:#DC2626;"><div class="mc-label">Contas a Pagar</div><div class="mc-val" style="color:var(--red)">${$c(contasPagar.filter(c=>c.status==='Pendente').reduce((s,c)=>s+(c.value||0),0))}</div></div>
+  <div class="mc purple"><div class="mc-label">Ticket Médio</div><div class="mc-val">${$c(filteredOrders.length?(receitas+pendente)/filteredOrders.length:0)}</div></div>
+</div>
+
+<div class="g2">
+  <div class="card">
+    <div class="card-title">💳 Pedidos — Status Financeiro</div>
+    ${filteredOrders.length===0?`<div class="empty"><div class="empty-icon">💰</div><p>Sem pedidos</p></div>`:`
+    <div class="tw"><table><thead><tr><th>#</th><th>Cliente</th><th>Total</th><th>Pgto</th><th>Status Pgto</th><th>Data</th><th></th></tr></thead>
+    <tbody>${filteredOrders.slice(0,15).map(o=>`<tr>
+      <td style="color:var(--rose);font-weight:600">${o.orderNumber||'—'}</td>
+      <td>${o.client?.name||o.clientName||'—'}</td>
+      <td style="font-weight:600">${$c(o.total)}</td>
+      <td><span class="tag t-gray">${o.payment||'—'}</span></td>
+      <td><span class="tag ${sc(o.paymentStatus||'Pendente')}">${o.paymentStatus||'Pendente'}</span></td>
+      <td style="color:var(--muted);font-size:11px">${$d(o.createdAt)}</td>
+      <td>${o.paymentStatus!=='Pago'?`<button class="btn btn-green btn-xs" data-mark-paid="${o._id}">✅ Pago</button>`:''}</td>
+    </tr>`).join('')}</tbody></table></div>`}
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">📋 Contas a Pagar
+        <span class="tag t-red">${contasPagar.filter(c=>c.status==='Pendente').length} pendentes</span>
+      </div>
+      ${contasPagar.length===0?`<div class="empty"><div class="empty-icon">📋</div><p>Nenhuma conta cadastrada</p><button class="btn btn-primary btn-sm" id="btn-new-despesa2" style="margin-top:8px">+ Adicionar conta</button></div>`:`
+      ${contasPagar.slice(0,8).map(c=>{
+        const vencida = c.status==='Pendente'&&c.dueDate&&new Date(c.dueDate)<new Date();
+        return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+          <div>
+            <div style="font-size:12px;font-weight:500">${c.description}</div>
+            <div style="font-size:10px;color:var(--muted)">${c.category||'—'} · Vence: ${c.dueDate?$d(c.dueDate):'—'}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:13px;font-weight:600;color:${vencida?'var(--red)':'var(--ink)'}">${$c(c.value)}</div>
+            <span class="tag ${vencida?'t-red':c.status==='Pago'?'t-green':'t-gold'}">${vencida?'Vencida':c.status}</span>
+            ${c.status==='Pendente'?`<button class="btn btn-green btn-xs" data-pay-bill="${c._id}" style="margin-top:3px">Pagar</button>`:''}
+          </div>
+        </div>`;
+      }).join('')}`}
+    </div>
+
+    <div class="card">
+      <div class="card-title">📊 Resumo por Forma de Pagamento</div>
+      ${['Pix','Dinheiro','Crédito','Débito','Link','Cortesia'].map(p=>{
+        const tot = filteredOrders.filter(o=>o.payment===p).reduce((s,o)=>s+(o.total||0),0);
+        const qty = filteredOrders.filter(o=>o.payment===p).length;
+        if(!qty) return '';
+        return`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;">
+          <span>${p} <span style="color:var(--muted)">(${qty} pedidos)</span></span>
+          <span style="font-weight:600">${$c(tot)}</span>
+        </div>`;
+      }).join('')}
     </div>
   </div>
-  ${S.orders.length===0?`<div class="empty"><div class="empty-icon">💰</div><p>Sem registros</p></div>`:`
-  <table><thead><tr><th>#</th><th>Cliente</th><th>Unidade</th><th>Total</th><th>Pgto</th><th>Status Pgto</th><th>Data</th></tr></thead>
-  <tbody>${S.orders.map(o=>`<tr>
-    <td style="color:var(--rose);font-weight:600">${o.orderNumber||'—'}</td>
-    <td>${o.client?.name||o.clientName||'—'}</td>
-    <td style="font-size:10px"><span class="tag t-gray">${o.unit||'—'}</span></td>
-    <td style="font-weight:600">${$c(o.total)}</td>
-    <td><span class="tag t-gray">${o.payment||'—'}</span></td>
-    <td><span class="tag ${sc(o.paymentStatus||'Pendente')}">${o.paymentStatus||'Pendente'}</span></td>
-    <td style="color:var(--muted)">${$d(o.createdAt)}</td>
-  </tr>`).join('')}</tbody></table>`}
 </div>`;
 }
+
 
 // ── COMISSÕES ────────────────────────────────────────────────
 function renderComissoes(){
@@ -1170,48 +1298,132 @@ function renderComissoes(){
 
 // ── RELATÓRIOS ───────────────────────────────────────────────
 function renderRelatorios(){
-  const byProd={};
-  S.orders.forEach(o=>(o.items||[]).forEach(i=>{
-    if(!byProd[i.name])byProd[i.name]={qty:0,rev:0};
-    byProd[i.name].qty+=i.qty||1;byProd[i.name].rev+=i.totalPrice||0;
+  const period = S._relPeriod||'mes';
+  const unit = S._relUnit||'';
+  const now = new Date();
+
+  const filterByPeriod = orders => {
+    return orders.filter(o=>{
+      const d = new Date(o.createdAt);
+      if(period==='hoje') return d.toDateString()===now.toDateString();
+      if(period==='semana'){const w=new Date(now);w.setDate(now.getDate()-7);return d>=w;}
+      if(period==='mes'){return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}
+      if(period==='mes_ant'){const m=now.getMonth()===0?11:now.getMonth()-1;return d.getMonth()===m;}
+      return true;
+    });
+  };
+
+  const filtered = filterByPeriod(unit?S.orders.filter(o=>o.unit===unit):S.orders);
+  const entregues = filtered.filter(o=>o.status==='Entregue');
+  const cancelados = filtered.filter(o=>o.status==='Cancelado');
+  const faturamento = filtered.filter(o=>o.status!=='Cancelado').reduce((s,o)=>s+(o.total||0),0);
+  const ticket = filtered.length ? faturamento/filtered.length : 0;
+
+  const byProduct = {};
+  filtered.forEach(o=>(o.items||[]).forEach(i=>{
+    if(!byProduct[i.name])byProduct[i.name]={qty:0,rev:0};
+    byProduct[i.name].qty+=i.qty||1;
+    byProduct[i.name].rev+=(i.totalPrice||0);
   }));
-  const top=Object.entries(byProd).sort((a,b)=>b[1].rev-a[1].rev).slice(0,8);
+  const topProds = Object.entries(byProduct).sort((a,b)=>b[1].rev-a[1].rev).slice(0,8);
+
+  const byPayment = {};
+  filtered.forEach(o=>{
+    if(!o.payment)return;
+    if(!byPayment[o.payment])byPayment[o.payment]={qty:0,total:0};
+    byPayment[o.payment].qty++;
+    byPayment[o.payment].total+=(o.total||0);
+  });
+
+  const byUnit = {};
+  S.orders.forEach(o=>{
+    const u=o.unit||'—';
+    if(!byUnit[u])byUnit[u]={qty:0,total:0};
+    byUnit[u].qty++;byUnit[u].total+=(o.total||0);
+  });
+
   return`
 <div class="card" style="margin-bottom:16px;">
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-    <select class="fi" style="width:auto"><option>Hoje</option><option>Esta semana</option><option selected>Este mês</option><option>Mês anterior</option><option>Personalizado</option></select>
-    ${S.user.role==='Administrador'?`<select class="fi" style="width:auto"><option>Todas as unidades</option><option>Loja Novo Aleixo</option><option>Loja Allegro Mall</option><option>CDLE</option></select>`:''}
-    <button class="btn btn-primary btn-sm">Gerar</button>
-    <button class="btn btn-ghost btn-sm">📥 PDF</button>
-    <button class="btn btn-ghost btn-sm">📊 Excel</button>
+    <div style="display:flex;gap:4px;">
+      ${[{k:'hoje',l:'Hoje'},{k:'semana',l:'Semana'},{k:'mes',l:'Este Mês'},{k:'mes_ant',l:'Mês Ant.'},{k:'todos',l:'Todos'}].map(p=>`
+      <button class="btn btn-sm ${period===p.k?'btn-primary':'btn-ghost'}" data-rel-period="${p.k}">${p.l}</button>`).join('')}
+    </div>
+    ${S.user.role==='Administrador'?`
+    <select class="fi" id="rel-unit-filter" style="width:auto;">
+      <option value="">Todas as unidades</option>
+      <option value="Loja Novo Aleixo">Loja Novo Aleixo</option>
+      <option value="Loja Allegro Mall">Loja Allegro Mall</option>
+      <option value="CDLE">CDLE</option>
+    </select>`:''}
+    <button class="btn btn-ghost btn-sm" onclick="window.print()">🖨️ Imprimir</button>
+    <button class="btn btn-ghost btn-sm" id="btn-export-pdf">📥 PDF</button>
   </div>
 </div>
+
+<div class="g4" style="margin-bottom:16px;">
+  <div class="mc rose"><div class="mc-label">Total Pedidos</div><div class="mc-val">${filtered.length}</div></div>
+  <div class="mc leaf"><div class="mc-label">Faturamento</div><div class="mc-val">${$c(faturamento)}</div></div>
+  <div class="mc gold"><div class="mc-label">Ticket Médio</div><div class="mc-val">${$c(ticket)}</div></div>
+  <div class="mc purple"><div class="mc-label">Entregues</div><div class="mc-val">${entregues.length}</div></div>
+</div>
+
 <div class="g2">
-  <div class="card">
-    <div class="card-title">Resumo Geral</div>
-    ${[
-      ['Total de Pedidos',S.orders.length],
-      ['Clientes Cadastrados',S.clients.length],
-      ['Produtos Cadastrados',S.products.length],
-      ['Pedidos Entregues',S.orders.filter(o=>o.status==='Entregue').length],
-      ['Pedidos Cancelados',S.orders.filter(o=>o.status==='Cancelado').length],
-      ['Faturamento',`${$c(S.orders.filter(o=>o.status!=='Cancelado').reduce((s,o)=>s+(o.total||0),0))}`],
-    ].map(([l,v])=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span style="color:var(--muted)">${l}</span><span style="font-weight:600">${v}</span></div>`).join('')}
+  <div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">🏆 Produtos Mais Vendidos</div>
+      ${topProds.length===0?`<div class="empty"><p>Sem dados no período</p></div>`:
+      topProds.map(([n,{qty,rev}],i)=>`
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+          <span><strong>#${i+1}</strong> ${n}</span>
+          <span style="color:var(--muted)">${qty} un · ${$c(rev)}</span>
+        </div>
+        <div class="pb"><div class="pf" style="width:${Math.min(100,(rev/Math.max(...Object.values(byProduct).map(b=>b.rev)))*100)}%;background:var(--rose)"></div></div>
+      </div>`).join('')}
+    </div>
+
+    <div class="card">
+      <div class="card-title">💳 Por Forma de Pagamento</div>
+      ${Object.entries(byPayment).map(([p,{qty,total}])=>`
+      <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;">
+        <span>${p} <span style="color:var(--muted)">(${qty})</span></span>
+        <span style="font-weight:600">${$c(total)}</span>
+      </div>`).join('')||`<div class="empty" style="padding:16px"><p>Sem dados</p></div>`}
+    </div>
   </div>
-  <div class="card">
-    <div class="card-title">Produtos Mais Vendidos</div>
-    ${top.length===0?`<div class="empty"><p>Sem dados</p></div>`:
-    top.map(([n,{qty,rev}])=>`
-    <div style="margin-bottom:10px;">
-      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
-        <span style="font-weight:500">${n}</span>
-        <span style="color:var(--muted)">${qty} un · ${$c(rev)}</span>
-      </div>
-      <div class="pb"><div class="pf" style="width:${Math.min(100,(rev/Math.max(...Object.values(byProd).map(b=>b.rev)))*100)}%;background:var(--rose)"></div></div>
-    </div>`).join('')}
+
+  <div>
+    ${S.user.role==='Administrador'?`
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">🏪 Por Unidade</div>
+      ${Object.entries(byUnit).map(([u,{qty,total}])=>`
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+          <span style="font-weight:500">${u}</span>
+          <span>${qty} pedidos · ${$c(total)}</span>
+        </div>
+        <div class="pb"><div class="pf" style="width:${Math.min(100,(total/Math.max(...Object.values(byUnit).map(b=>b.total)))*100)}%;background:var(--leaf)"></div></div>
+      </div>`).join('')||`<div class="empty" style="padding:16px"><p>Sem dados</p></div>`}
+    </div>`:''}
+
+    <div class="card">
+      <div class="card-title">📋 Resumo Geral</div>
+      ${[
+        ['Total de Pedidos', filtered.length],
+        ['Faturamento', $c(faturamento)],
+        ['Ticket Médio', $c(ticket)],
+        ['Pedidos Entregues', entregues.length],
+        ['Pedidos Cancelados', cancelados.length],
+        ['Clientes Cadastrados', S.clients.length],
+        ['Produtos Ativos', S.products.filter(p=>p.active!==false).length],
+      ].map(([l,v])=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px;">
+        <span style="color:var(--muted)">${l}</span><span style="font-weight:600">${v}</span></div>`).join('')}
+    </div>
   </div>
 </div>`;
 }
+
 
 // ── ALERTAS ──────────────────────────────────────────────────
 function renderAlertas(){
@@ -1325,54 +1537,244 @@ async function toggleUserActive(id, currentActive){
   }catch(e){}
 }
 
+// ── ESTOQUE MODALS ───────────────────────────────────────────
+function showFinModal(type){
+  const cats = type==='Despesa' 
+    ? ['Insumos','Fixo','Variável','Salário','Fornecedor','Marketing','Manutenção','Outros']
+    : ['Vendas','Pré-venda','Outros'];
+  S._modal=`<div class="mo" id="mo"><div class="mo-box" onclick="event.stopPropagation()">
+  <div class="mo-title">${type==='Receita'?'💰 Nova Receita':'💸 Nova Conta a Pagar'}</div>
+  <div class="fg"><label class="fl">Descrição *</label><input class="fi" id="fm-desc" placeholder="${type==='Despesa'?'Ex: Fornecedor de rosas':'Ex: Venda balcão'}"/></div>
+  <div class="fr2">
+    <div class="fg"><label class="fl">Valor (R$) *</label><input class="fi" type="number" id="fm-value" step="0.01" placeholder="0,00"/></div>
+    <div class="fg"><label class="fl">Data de ${type==='Despesa'?'Vencimento':'Recebimento'}</label><input class="fi" type="date" id="fm-date"/></div>
+  </div>
+  <div class="fr2">
+    <div class="fg"><label class="fl">Categoria</label>
+      <select class="fi" id="fm-cat">
+        ${cats.map(c=>`<option>${c}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label class="fl">Unidade</label>
+      <select class="fi" id="fm-unit">
+        <option value="Todas">Todas</option>
+        <option value="Loja Novo Aleixo">Loja Novo Aleixo</option>
+        <option value="Loja Allegro Mall">Loja Allegro Mall</option>
+        <option value="CDLE">CDLE</option>
+      </select>
+    </div>
+  </div>
+  ${type==='Despesa'?`<div class="fg"><label class="fl">Fornecedor / Beneficiário</label><input class="fi" id="fm-supplier" placeholder="Nome do fornecedor"/></div>`:''}
+  <div class="fg"><label class="fl">Observações</label><textarea class="fi" id="fm-notes" rows="2"></textarea></div>
+  <div class="mo-foot">
+    <button class="btn ${type==='Receita'?'btn-green':'btn-red'}" id="btn-sv-fin">Salvar ${type}</button>
+    <button class="btn btn-ghost" id="btn-mo-close">Cancelar</button>
+  </div>
+  </div></div>`;
+  render();
+  document.getElementById('btn-mo-close')?.addEventListener('click',()=>{S._modal='';render();});
+  document.getElementById('btn-sv-fin')?.addEventListener('click',()=>{
+    const desc=document.getElementById('fm-desc')?.value.trim();
+    const value=parseFloat(document.getElementById('fm-value')?.value||0);
+    if(!desc) return toast('❌ Descrição obrigatória');
+    if(!value||value<=0) return toast('❌ Informe o valor');
+    const entry={
+      id:Date.now().toString(),
+      type, description:desc, value,
+      dueDate:document.getElementById('fm-date')?.value||null,
+      category:document.getElementById('fm-cat')?.value,
+      unit:document.getElementById('fm-unit')?.value,
+      supplier:document.getElementById('fm-supplier')?.value||'',
+      notes:document.getElementById('fm-notes')?.value||'',
+      status:'Pendente',
+      createdAt:new Date().toISOString()
+    };
+    const entries=JSON.parse(localStorage.getItem('fv_financial')||'[]');
+    entries.unshift(entry);
+    localStorage.setItem('fv_financial',JSON.stringify(entries));
+    S.financialEntries=entries;
+    S._modal='';render();
+    toast(`✅ ${type} cadastrada!`);
+  });
+}
+
+function showStockModal(prodId, prodName, type='Entrada'){
+  const validUnits = ['Loja Novo Aleixo','Loja Allegro Mall','CDLE'];
+  const defaultUnit = validUnits.includes(S.user.unit) ? S.user.unit : 'CDLE';
+  S._modal=`<div class="mo" id="mo"><div class="mo-box" onclick="event.stopPropagation()">
+  <div class="mo-title">${type==='Entrada'?'📦 Entrada':'📤 Saída'} de Estoque</div>
+  <div class="fg"><label class="fl">Produto</label><input class="fi" value="${prodName}" readonly style="background:var(--cream)"/></div>
+  <div class="fr2">
+    <div class="fg"><label class="fl">Quantidade *</label><input class="fi" type="number" id="sm-qty" placeholder="0" min="1"/></div>
+    <div class="fg"><label class="fl">Unidade *</label>
+      <select class="fi" id="sm-unit">
+        ${validUnits.map(u=>`<option value="${u}" ${u===defaultUnit?'selected':''}>${u}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div class="fg"><label class="fl">Motivo</label>
+    <select class="fi" id="sm-reason">
+      ${type==='Entrada'?
+        '<option>Compra de fornecedor</option><option>Transferência recebida</option><option>Devolução</option><option>Ajuste de inventário</option><option>Outros</option>':
+        '<option>Venda balcão</option><option>Perda/Avaria</option><option>Transferência enviada</option><option>Ajuste de inventário</option><option>Outros</option>'
+      }
+    </select>
+  </div>
+  <div class="fg"><label class="fl">Observação</label><textarea class="fi" id="sm-obs" rows="2" placeholder="Detalhes adicionais..."></textarea></div>
+  <div class="mo-foot">
+    <button class="btn ${type==='Entrada'?'btn-green':'btn-red'}" id="btn-sv-stock">Confirmar ${type}</button>
+    <button class="btn btn-ghost" id="btn-mo-close">Cancelar</button>
+  </div>
+  </div></div>`;
+  render();
+  document.getElementById('btn-mo-close')?.addEventListener('click',()=>{S._modal='';render();});
+  document.getElementById('btn-sv-stock')?.addEventListener('click',()=>saveStockMove(prodId,type));
+}
+
+function showTransferModal(){
+  S._modal=`<div class="mo" id="mo"><div class="mo-box" onclick="event.stopPropagation()">
+  <div class="mo-title">🔄 Transferência entre Unidades</div>
+  <div class="fg"><label class="fl">Produto *</label>
+    <select class="fi" id="tr-prod">
+      <option value="">Selecionar produto...</option>
+      ${S.products.map(p=>`<option value="${p._id}">${p.name} (Est: ${p.stock||0})</option>`).join('')}
+    </select>
+  </div>
+  <div class="fr2">
+    <div class="fg"><label class="fl">Origem *</label>
+      <select class="fi" id="tr-from">
+        <option value="CDLE">CDLE</option>
+        <option value="Loja Novo Aleixo">Loja Novo Aleixo</option>
+        <option value="Loja Allegro Mall">Loja Allegro Mall</option>
+      </select>
+    </div>
+    <div class="fg"><label class="fl">Destino *</label>
+      <select class="fi" id="tr-to">
+        <option value="Loja Novo Aleixo">Loja Novo Aleixo</option>
+        <option value="Loja Allegro Mall">Loja Allegro Mall</option>
+        <option value="CDLE">CDLE</option>
+      </select>
+    </div>
+  </div>
+  <div class="fg"><label class="fl">Quantidade *</label><input class="fi" type="number" id="tr-qty" placeholder="0" min="1"/></div>
+  <div class="fg"><label class="fl">Observação</label><textarea class="fi" id="tr-obs" rows="2"></textarea></div>
+  <div class="mo-foot">
+    <button class="btn btn-blue" id="btn-sv-transfer">Confirmar Transferência</button>
+    <button class="btn btn-ghost" id="btn-mo-close">Cancelar</button>
+  </div>
+  </div></div>`;
+  render();
+  document.getElementById('btn-mo-close')?.addEventListener('click',()=>{S._modal='';render();});
+  document.getElementById('btn-sv-transfer')?.addEventListener('click',saveTransfer);
+}
+
+async function saveStockMove(prodId, type){
+  const qty = parseInt(document.getElementById('sm-qty')?.value||0);
+  const unit = document.getElementById('sm-unit')?.value;
+  const reason = document.getElementById('sm-reason')?.value;
+  const obs = document.getElementById('sm-obs')?.value;
+  if(!qty||qty<=0) return toast('❌ Informe a quantidade');
+  try{
+    S.loading=true;S._modal='';render();
+    const move = await POST('/stock',{product:prodId,type,qty,unit,reason:obs?reason+' — '+obs:reason});
+    S.stockMoves.unshift(move);
+    // Update product stock locally
+    S.products = S.products.map(p=>{
+      if(p._id===prodId){
+        const newStock = type==='Entrada' ? (p.stock||0)+qty : Math.max(0,(p.stock||0)-qty);
+        return {...p, stock:newStock};
+      }
+      return p;
+    });
+    S.loading=false;render();
+    toast(`✅ ${type} de ${qty} unidades registrada!`);
+  }catch(e){S.loading=false;render();}
+}
+
+async function saveTransfer(){
+  const prodId = document.getElementById('tr-prod')?.value;
+  const from = document.getElementById('tr-from')?.value;
+  const to = document.getElementById('tr-to')?.value;
+  const qty = parseInt(document.getElementById('tr-qty')?.value||0);
+  const obs = document.getElementById('tr-obs')?.value;
+  if(!prodId) return toast('❌ Selecione o produto');
+  if(!qty||qty<=0) return toast('❌ Informe a quantidade');
+  if(from===to) return toast('❌ Origem e destino devem ser diferentes');
+  try{
+    S.loading=true;S._modal='';render();
+    const move = await POST('/stock',{product:prodId,type:'Transferência',qty,unit:from,unitDest:to,reason:obs||'Transferência entre unidades'});
+    S.stockMoves.unshift(move);
+    S.loading=false;render();
+    toast(`✅ Transferência de ${qty} unidades registrada!`);
+  }catch(e){S.loading=false;render();}
+}
+
+async function loadStockMoves(){
+  try{
+    const moves = await GET('/stock/moves');
+    S.stockMoves = moves||[];
+  }catch(e){ S.stockMoves=[]; }
+}
+
 // ── IA ───────────────────────────────────────────────────────
 function renderIA(){
   return`
 <div class="g2">
-  <div class="card">
-    <div class="card-title">🤖 IA Assistente — FloreVita</div>
-    <div class="alert al-info">Posso ajudar com mensagens de cartão, dúvidas sobre floricultura e uso do sistema!</div>
-    <div class="chat-wrap" id="chat-wrap">
+  <div class="card" style="display:flex;flex-direction:column;">
+    <div class="card-title">🤖 IA Assistente FloreVita</div>
+    <div class="alert al-info" style="margin-bottom:12px;">Posso sugerir mensagens para cartões, ideias de buquês, preços e dicas de atendimento! 🌸</div>
+    <div class="chat-wrap" id="chat-wrap" style="flex:1;min-height:300px;">
       <div class="chat-msg ai">
-        <div class="chat-bubble">Olá! 🌸 Sou a IA da FloreVita. Posso te ajudar com:<br><br>
-        • Sugestões de mensagens para cartões<br>
-        • Dúvidas sobre flores e floricultura<br>
-        • Como usar o sistema<br>
-        • Dicas de atendimento<br><br>
+        <div class="chat-bubble">Olá! 🌺 Sou a IA da Laços Eternos. Posso ajudar com:<br><br>
+        💌 Mensagens para cartões personalizadas<br>
+        🌹 Sugestões de montagem de buquês<br>
+        💰 Consulta rápida de preços<br>
+        👩‍💼 Dicas de atendimento ao cliente<br>
+        🌿 Cuidados com flores<br><br>
         Como posso ajudar?</div>
       </div>
       ${(S.chatHistory||[]).map(m=>`
       <div class="chat-msg ${m.role==='user'?'user':'ai'}">
-        <div class="chat-bubble">${m.content}</div>
+        <div class="chat-bubble" style="white-space:pre-wrap">${m.content}</div>
       </div>`).join('')}
+      ${S._iaLoading?`<div class="chat-msg ai"><div class="chat-bubble"><div class="spin" style="width:14px;height:14px;border-width:2px"></div></div></div>`:''}
     </div>
-    <div class="chat-input-wrap">
+    <div class="chat-input-wrap" style="margin-top:10px;">
       <input class="fi" id="chat-input" placeholder="Digite sua pergunta..." style="flex:1"/>
       <button class="btn btn-primary" id="btn-chat-send">Enviar</button>
     </div>
   </div>
-  <div class="card">
-    <div class="card-title">💡 Sugestões Rápidas</div>
-    <div style="display:flex;flex-direction:column;gap:8px;">
-      ${[
-        'Mensagem para aniversário com rosas',
-        'Mensagem para buquê de noiva',
-        'Mensagem para condolências com coroa',
-        'Mensagem para Dia das Mães',
-        'Como cuidar de orquídeas',
-        'Flores para quem está doente',
-        'Como fazer um buquê durar mais',
-        'Dicas de atendimento ao cliente',
-      ].map(s=>`<button class="btn btn-ghost btn-sm ia-sugg" data-sugg="${s}" style="text-align:left;justify-content:flex-start">💬 ${s}</button>`).join('')}
+
+  <div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">💡 Sugestões Rápidas</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${[
+          {icon:'💌',text:'Mensagem de aniversário com rosas'},
+          {icon:'💍',text:'Mensagem para buquê de noiva'},
+          {icon:'🕊️',text:'Mensagem de condolências com coroa'},
+          {icon:'👩',text:'Mensagem especial para o Dia das Mães'},
+          {icon:'💕',text:'Mensagem romântica para namorados'},
+          {icon:'🌹',text:'Como montar um buquê com 12 rosas'},
+          {icon:'🌸',text:'Quanto cobrar por um buquê médio'},
+          {icon:'🌿',text:'Como conservar flores por mais tempo'},
+          {icon:'👋',text:'Script de atendimento para WhatsApp'},
+          {icon:'🎁',text:'Sugestão de presente para aniversário de 50 anos'},
+        ].map(s=>`<button class="btn btn-ghost btn-sm ia-sugg" data-sugg="${s.text}" style="text-align:left;justify-content:flex-start;">${s.icon} ${s.text}</button>`).join('')}
+      </div>
     </div>
-    <hr/>
-    <div class="card-title" style="font-size:13px;">📝 Última Sugestão de Cartão</div>
-    <div style="background:var(--petal);border-radius:var(--r);padding:12px;font-size:12px;color:var(--ink2);line-height:1.6;" id="last-suggestion">
-      Clique em uma sugestão rápida ou escreva sua pergunta para gerar uma mensagem personalizada. 🌸
+
+    <div class="card">
+      <div class="card-title">📝 Última Resposta</div>
+      <div style="background:var(--petal);border-radius:var(--r);padding:14px;font-size:13px;color:var(--ink2);line-height:1.7;min-height:80px;white-space:pre-wrap" id="last-ia-response">
+        ${S.chatHistory?.filter(m=>m.role==='assistant').slice(-1)[0]?.content||'Clique em uma sugestão ou escreva sua pergunta. 🌸'}
+      </div>
+      <button class="btn btn-ghost btn-sm" id="btn-copy-ia" style="margin-top:8px">📋 Copiar texto</button>
     </div>
   </div>
 </div>`;
 }
+
 
 // ── USUÁRIOS ─────────────────────────────────────────────────
 function renderUsuarios(){
@@ -1407,158 +1809,96 @@ function renderUsuarios(){
   </tbody></table></div>`}
 </div>`;}
 function renderConfig(){
+  const cfg = JSON.parse(localStorage.getItem('fv_config')||'{}');
   return`
 <div class="g2">
-  <div class="card">
-    <div class="card-title">🏪 Dados da Empresa</div>
-    <div class="fg"><label class="fl">Nome</label><input class="fi" value="Laços Eternos Floricultura"/></div>
-    <div class="fg"><label class="fl">CNPJ</label><input class="fi" placeholder="00.000.000/0001-00"/></div>
-    <div class="fg"><label class="fl">WhatsApp</label><input class="fi" placeholder="(xx) 9xxxx-xxxx"/></div>
-    <button class="btn btn-primary" onclick="toast('✅ Salvo!')">Salvar</button>
-    <hr/>
-    <div class="card-title" style="font-size:13px">🚚 Taxas de Entrega</div>
-    <div style="margin-bottom:10px;">
+  <div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">🏪 Dados da Empresa</div>
+      <div class="fg"><label class="fl">Razão Social</label><input class="fi" id="cfg-razao" value="${cfg.razao||'Laços Eternos Floricultura'}" placeholder="Razão Social"/></div>
+      <div class="fr2">
+        <div class="fg"><label class="fl">CNPJ</label><input class="fi" id="cfg-cnpj" value="${cfg.cnpj||''}" placeholder="00.000.000/0001-00"/></div>
+        <div class="fg"><label class="fl">Inscrição Estadual</label><input class="fi" id="cfg-ie" value="${cfg.ie||''}" placeholder="IE"/></div>
+      </div>
+      <div class="fg"><label class="fl">WhatsApp</label><input class="fi" id="cfg-whats" value="${cfg.whats||'5592993002433'}" placeholder="5592993002433"/></div>
+      <div class="fg"><label class="fl">Endereço</label><input class="fi" id="cfg-addr" value="${cfg.addr||''}" placeholder="Rua, número — Manaus/AM"/></div>
+      <div class="fg"><label class="fl">E-mail</label><input class="fi" id="cfg-email" value="${cfg.email||''}" placeholder="contato@lacoseternos.com.br"/></div>
+      <button class="btn btn-primary" id="btn-save-cfg">💾 Salvar Dados</button>
+    </div>
+
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">🧾 Certificado Digital (NF-e / NFC-e)</div>
+      <div class="alert al-info">Para emissão de notas fiscais e cupons fiscais em todas as unidades.</div>
+      ${['Loja Novo Aleixo','Loja Allegro Mall','CDLE'].map(u=>`
+      <div style="padding:12px;border:1px solid var(--border);border-radius:var(--r);margin-bottom:8px;">
+        <div style="font-weight:600;font-size:12px;margin-bottom:8px">🏪 ${u}</div>
+        <div class="fr2">
+          <div class="fg"><label class="fl">Arquivo .pfx</label>
+            <div class="img-up" style="padding:10px;font-size:12px;">
+              📎 Clique para enviar o certificado .pfx
+            </div>
+          </div>
+          <div class="fg"><label class="fl">Senha do Certificado</label><input class="fi" type="password" placeholder="Senha do certificado"/></div>
+        </div>
+        <div class="fg"><label class="fl">Ambiente</label>
+          <select class="fi">
+            <option>Homologação (teste)</option>
+            <option>Produção</option>
+          </select>
+        </div>
+        <div class="fg"><label class="fl">Série NF-e</label><input class="fi" placeholder="001"/></div>
+        <button class="btn btn-ghost btn-sm">🔌 Testar Certificado</button>
+      </div>`).join('')}
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">🚚 Taxas de Entrega</div>
       ${Object.entries(DELIVERY_FEES).map(([city,zones])=>`
       <div style="margin-bottom:8px;">
-        <div style="font-weight:600;font-size:12px;margin-bottom:4px">${city}</div>
+        <div style="font-weight:600;font-size:12px;margin-bottom:4px">📍 ${city}</div>
         ${Object.entries(zones).map(([zone,fee])=>`
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
           <span style="flex:1;font-size:12px">${zone}</span>
-          <input type="number" value="${fee}" step="0.50" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;" data-fee-city="${city}" data-fee-zone="${zone}" class="fee-input"/>
+          <input type="number" value="${fee}" step="0.50" style="width:80px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;" data-fee-city="${city}" data-fee-zone="${zone}" class="fee-input"/>
           <span style="font-size:11px;color:var(--muted)">R$</span>
         </div>`).join('')}
       </div>`).join('')}
-    </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-      <button class="btn btn-primary btn-sm" id="btn-save-fees">💾 Salvar Taxas</button>
-      <button class="btn btn-ghost btn-sm" id="btn-add-zone">+ Nova Zona</button>
-    </div>
-    <hr/>
-    <div class="card-title" style="font-size:13px">🔗 Integrações</div>
-    ${[
-      {n:'iFood',i:'🍕',s:'Configurar'},
-      {n:'Giuliana Flores',i:'🌷',s:'Configurar'},
-      {n:'WhatsApp Business',i:'💬',s:'Configurar'},
-      {n:'Google Maps',i:'🗺️',s:'Configurar'},
-      {n:'Gateway Pagamento',i:'💳',s:'Configurar'},
-      {n:'Cloudinary (Fotos)',i:'📷',s:'Configurar'},
-    ].map(i=>`
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
-      <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:16px">${i.i}</span><span style="font-size:12px;font-weight:500">${i.n}</span></div>
-      <button class="btn btn-ghost btn-sm">${i.s}</button>
-    </div>`).join('')}
-  </div>
-  <div class="card">
-    <div class="card-title">⚙️ Sistema</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Backend: <strong style="color:var(--leaf)">florevita-backend.onrender.com</strong></div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Banco: <strong style="color:var(--leaf)">MongoDB Atlas</strong></div>
-    <button class="btn btn-green btn-sm" id="btn-test-api">🔌 Testar Conexão</button>
-    <hr/>
-    <div class="card-title" style="font-size:13px">💡 Sugerir Melhoria</div>
-    <textarea class="fi" id="sug-txt" placeholder="Sua ideia..." rows="3"></textarea>
-    <button class="btn btn-outline btn-sm" id="btn-sug" style="margin-top:8px">Enviar</button>
-    <hr/>
-    <div class="card-title" style="font-size:13px">📲 Notificação de Entrega (WhatsApp)</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Variáveis: {nome} {produto} {data} {floricultura}</div>
-    <textarea class="fi" id="notif-template" rows="4" placeholder="Mensagem padrão...">${JSON.parse(localStorage.getItem('fv_notif_cfg')||'{}').template||'Olá, {nome}! 🌸 Seu pedido foi entregue com sucesso. Esperamos que tenha amado! 💖 Floricultura Laços Eternos'}</textarea>
-    <div class="notif-msg-preview" id="notif-preview">${(JSON.parse(localStorage.getItem('fv_notif_cfg')||'{}').template||'Olá, {nome}! 🌸 Seu pedido foi entregue com sucesso. Esperamos que tenha amado! 💖 Floricultura Laços Eternos').replace(/{nome}/gi,'Maria').replace(/{produto}/gi,'Buquê Premium').replace(/{data}/gi,new Date().toLocaleDateString('pt-BR')).replace(/{floricultura}/gi,'Laços Eternos')}</div>
-    <button class="btn btn-primary btn-sm" id="btn-save-notif" style="margin-top:8px">💾 Salvar Mensagem</button>
-    <hr/>
-    <div class="card-title" style="font-size:13px">📊 Histórico de Notificações</div>
-    <div style="max-height:200px;overflow-y:auto;">
-    ${(JSON.parse(localStorage.getItem('fv_notif_logs')||'[]')).slice(0,8).map(l=>`
-    <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:11px;">
-      <div style="display:flex;justify-content:space-between;">
-        <span style="font-weight:500">${l.client} — ${l.orderNum}</span>
-        <span class="tag ${l.sent?'t-green':'t-red'}">${l.sent?'Enviado':'Falhou'}</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+        <button class="btn btn-primary btn-sm" id="btn-save-fees">💾 Salvar Taxas</button>
+        <button class="btn btn-ghost btn-sm" id="btn-add-zone">+ Nova Zona</button>
       </div>
-      <div style="color:var(--muted);margin-top:2px">${new Date(l.at).toLocaleString('pt-BR')}</div>
-    </div>`).join('')||'<div style="color:var(--muted);font-size:12px;padding:8px 0">Nenhuma notificação enviada ainda.</div>'}
+    </div>
+
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">🔗 Integrações</div>
+      ${[
+        {n:'iFood',i:'🍕',s:'Configurar'},
+        {n:'Giuliana Flores',i:'🌷',s:'Configurar'},
+        {n:'WhatsApp Business',i:'💬',s:'Configurar'},
+        {n:'Google Maps',i:'🗺️',s:'Configurar'},
+        {n:'Mercado Pago',i:'💳',s:'Configurar'},
+        {n:'Cloudinary (Fotos)',i:'📷',s:'Configurar'},
+      ].map(i=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+        <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:16px">${i.i}</span><span style="font-size:12px;font-weight:500">${i.n}</span></div>
+        <button class="btn btn-ghost btn-sm">${i.s}</button>
+      </div>`).join('')}
+    </div>
+
+    <div class="card">
+      <div class="card-title">⚙️ Sistema</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Backend: <strong style="color:var(--leaf)">florevita-backend.onrender.com</strong></div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Banco: <strong style="color:var(--leaf)">MongoDB Atlas</strong></div>
+      <button class="btn btn-green btn-sm" id="btn-test-api">🔌 Testar Conexão</button>
+      <hr/>
+      <div class="card-title" style="font-size:13px;margin-top:10px">💡 Sugerir Melhoria</div>
+      <textarea class="fi" id="sug-txt" placeholder="Sua ideia..." rows="3"></textarea>
+      <button class="btn btn-outline btn-sm" id="btn-sug" style="margin-top:8px">Enviar</button>
     </div>
   </div>
 </div>`;
-}
-
-
-// ── DELIVERY INTELLIGENCE ─────────────────────────────────────
-function getDeliveryRisk(order) {
-  if (!order.scheduledDate) return 'ok';
-  const now = new Date();
-  const scheduled = new Date(order.scheduledDate);
-  const today = now.toDateString() === scheduled.toDateString();
-  if (!today) return 'ok';
-  
-  const h = now.getHours();
-  const period = order.scheduledPeriod;
-  const time = order.scheduledTime;
-  
-  // If specific time
-  if (time) {
-    const [hh, mm] = time.split(':').map(Number);
-    const diffMin = (hh * 60 + mm) - (h * 60 + now.getMinutes());
-    if (diffMin < 30) return 'high';
-    if (diffMin < 60) return 'medium';
-    return 'ok';
-  }
-  // By period
-  if (period === 'Manhã' && h >= 11) return h >= 12 ? 'high' : 'medium';
-  if (period === 'Tarde' && h >= 17) return h >= 18 ? 'high' : 'medium';
-  if (period === 'Noite' && h >= 21) return 'high';
-  return 'ok';
-}
-
-function getRiskLabel(risk) {
-  return {
-    'high': '<span class="risk-badge risk-high">🚨 Risco de Atraso</span>',
-    'medium': '<span class="risk-badge risk-med">⚠️ Atenção</span>',
-    'ok': '<span class="risk-badge risk-ok">✅ No Prazo</span>'
-  }[risk] || '';
-}
-
-function sortDeliveryOrders(orders) {
-  const riskOrder = { high: 0, medium: 1, ok: 2 };
-  const periodOrder = { 'Manhã': 0, 'Tarde': 1, 'Noite': 2, 'Horário específico': 0 };
-  return [...orders].sort((a, b) => {
-    const ra = getDeliveryRisk(a), rb = getDeliveryRisk(b);
-    if (riskOrder[ra] !== riskOrder[rb]) return riskOrder[ra] - riskOrder[rb];
-    const pa = periodOrder[a.scheduledPeriod] ?? 3;
-    const pb = periodOrder[b.scheduledPeriod] ?? 3;
-    if (pa !== pb) return pa - pb;
-    if (a.scheduledTime && b.scheduledTime) return a.scheduledTime.localeCompare(b.scheduledTime);
-    return 0;
-  });
-}
-
-function getBorderClass(risk) {
-  return { high: 'delivery-priority', medium: 'delivery-warning', ok: 'delivery-ok' }[risk] || '';
-}
-
-// WhatsApp notification on delivery
-function sendDeliveryNotification(order) {
-  const cfg = JSON.parse(localStorage.getItem('fv_notif_cfg') || '{}');
-  const clientPhone = order.client?.phone || order.clientPhone || '';
-  if (!clientPhone) return;
-  
-  const template = cfg.template || 'Olá, {nome}! 🌸 Seu pedido foi entregue com sucesso. Esperamos que tenha amado! 💖 Floricultura Laços Eternos';
-  const clientName = order.client?.name || order.clientName || 'Cliente';
-  const produtos = (order.items || []).map(i => i.name).join(', ');
-  const data = order.scheduledDate ? new Date(order.scheduledDate).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR');
-  
-  const msg = template
-    .replace(/{nome}/gi, clientName)
-    .replace(/{produto}/gi, produtos)
-    .replace(/{data}/gi, data)
-    .replace(/{floricultura}/gi, 'Laços Eternos');
-  
-  const phone = clientPhone.replace(/\D/g, '');
-  const url = `https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`;
-  window.open(url, '_blank');
-  
-  // Log notification
-  const logs = JSON.parse(localStorage.getItem('fv_notif_logs') || '[]');
-  logs.unshift({ orderId: order._id, orderNum: order.orderNumber, client: clientName, phone, msg, sent: true, at: new Date().toISOString() });
-  localStorage.setItem('fv_notif_logs', JSON.stringify(logs.slice(0, 50)));
-  toast('📱 Notificação enviada para ' + clientName + '!');
 }
 
 
@@ -1849,8 +2189,8 @@ async function finalizePDV(){
     S.loading=true;render();
     const o=await POST('/orders',data);
     S.orders.unshift(o);
-    // Envia notificação WhatsApp automaticamente
-    sendWhatsAppNotification(o);
+    // Notifica WhatsApp (sem abrir nova tela)
+    notifyWhatsApp(o);
     PDV={cart:[],discount:0,payment:'Pix',clientId:'',clientName:'',clientPhone:'',clientEmail:'',recipient:'',cardMessage:'',notes:'',deliveryDate:'',deliveryPeriod:'Manhã',deliveryTime:'',street:'',neighborhood:'',number:'',city:'',cep:'',reference:'',isCondominium:false,block:'',apt:'',type:'Delivery',deliveryFee:0,zone:'',clientSearch:'',pickupUnit:'',saleUnit:'',notifyClient:true,identifyClient:true,_showQuickReg:false};
     S.loading=false;S.page='pedidos';render();toast('✅ Pedido '+o.orderNumber+' criado!');
   }catch(e){S.loading=false;render();}
@@ -1879,6 +2219,34 @@ function sendWhatsAppNotification(order){
   window.open(url, '_blank');
 }
 
+function notifyWhatsApp(order){
+  const num = '5592993002433';
+  const items = (order.items||[]).map(i=>`• ${i.qty}x ${i.name}`).join('\n');
+  const msg = [
+    '🌺 *NOVO PEDIDO — Laços Eternos*',
+    `*Nº:* ${order.orderNumber||'—'}`,
+    `*Cliente:* ${order.client?.name||order.clientName||'—'} ${order.clientPhone?'('+order.clientPhone+')':''}`,
+    `*Produto:*\n${items}`,
+    order.recipient?`*Destinatário:* ${order.recipient}`:'',
+    order.deliveryAddress?`*Endereço:* ${order.deliveryAddress}`:'',
+    order.scheduledPeriod?`*Turno:* ${order.scheduledPeriod} ${order.scheduledTime||''}`:'',
+    order.cardMessage?`*Cartão:* "${order.cardMessage}"`:'',
+    `*Pgto:* ${order.payment||'—'} · *Total:* ${new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(order.total||0)}`,
+    order.notes?`*Obs:* ${order.notes}`:'',
+  ].filter(Boolean).join('\n');
+
+  // Tenta enviar sem abrir nova janela usando fetch
+  // Como não temos API WhatsApp Business, abre discretamente em background
+  const link = `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
+  // Salva para log de notificações
+  const logs = JSON.parse(localStorage.getItem('fv_notif_logs')||'[]');
+  logs.unshift({orderNum:order.orderNumber, msg, time:new Date().toISOString(), link});
+  localStorage.setItem('fv_notif_logs', JSON.stringify(logs.slice(0,20)));
+  // Abre em nova aba minimizada
+  const w = window.open(link, '_blank', 'width=1,height=1,left=-100,top=-100');
+  setTimeout(()=>{ try{ if(w&&!w.closed) w.close(); }catch(e){} }, 3000);
+}
+
 async function advanceOrder(id){
   const o=S.orders.find(x=>x._id===id);if(!o)return;
   const nxt={'Aguardando':'Em preparo','Em preparo':'Pronto','Pronto':'Saiu p/ entrega','Saiu p/ entrega':'Entregue'};
@@ -1897,17 +2265,38 @@ async function advanceOrder(id){
 }
 
 async function sendChat(msg){
-  if(!msg.trim())return;
-  S.chatHistory=[...S.chatHistory,{role:'user',content:msg}];
-  render();scrollChat();
+  if(!msg||!msg.trim())return;
+  S.chatHistory=[...(S.chatHistory||[]),{role:'user',content:msg}];
+  S._iaLoading=true;
+  render();
+  setTimeout(()=>{const el=document.getElementById('chat-wrap');if(el)el.scrollTop=el.scrollHeight;},100);
   try{
-    const res=await fetch(CLAUDE_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:`Você é a IA assistente da FloreVita, sistema de gestão da floricultura Laços Eternos. Você é especialista em floricultura, atendimento ao cliente e uso do sistema FloreVita. Responda sempre em português brasileiro, de forma simpática e profissional. Para sugestões de mensagens de cartão, crie textos bonitos, emocionantes e personalizados. Para dúvidas sobre flores, dê informações precisas sobre cuidados, significados e combinações.`,messages:S.chatHistory.map(m=>({role:m.role,content:m.content}))})});
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:1000,
+        system:`Você é a IA assistente da Laços Eternos Floricultura em Manaus/AM. Especialista em floricultura, atendimento ao cliente e vendas de flores. Responda sempre em português brasileiro, de forma simpática, profissional e direta. 
+
+Para mensagens de cartão: crie textos bonitos, emocionantes e personalizados conforme a ocasião.
+Para dúvidas sobre flores: dê informações sobre cuidados, significados e combinações.
+Para montagem de buquês: sugira flores, cores e quantidades.
+Para atendimento: dê scripts práticos e dicas de vendas.
+Seja conciso mas completo.`,
+        messages:S.chatHistory.map(m=>({role:m.role,content:m.content}))
+      })
+    });
     const data=await res.json();
     const reply=data.content?.[0]?.text||'Desculpe, não consegui responder agora.';
     S.chatHistory=[...S.chatHistory,{role:'assistant',content:reply}];
-    document.getElementById('last-suggestion')&&(document.getElementById('last-suggestion').textContent=reply);
-  }catch(e){S.chatHistory=[...S.chatHistory,{role:'assistant',content:'Desculpe, estou temporariamente indisponível. Tente novamente em instantes.'}];}
-  render();scrollChat();
+    S._iaLoading=false;
+  }catch(e){
+    S.chatHistory=[...(S.chatHistory||[]),{role:'assistant',content:'Desculpe, estou temporariamente indisponível. Tente novamente.'}];
+    S._iaLoading=false;
+  }
+  render();
+  setTimeout(()=>{const el=document.getElementById('chat-wrap');if(el)el.scrollTop=el.scrollHeight;},100);
 }
 
 function scrollChat(){setTimeout(()=>{const el=document.getElementById('chat-wrap');if(el)el.scrollTop=el.scrollHeight;},100);}
@@ -2043,7 +2432,36 @@ function bindPageActions(){
       if(c.address?.street){PDV.street=c.address.street||'';PDV.number=c.address.number||'';PDV.neighborhood=c.address.neighborhood||'';}
       render();}
     }));
-    // Delivery fee
+    if(S.page==='financeiro'){
+    document.getElementById('fin-unit-filter')?.addEventListener('change',e=>{S._finUnit=e.target.value;render();});
+    document.getElementById('btn-new-receita')?.addEventListener('click',()=>showFinModal('Receita'));
+    document.getElementById('btn-new-despesa')?.addEventListener('click',()=>showFinModal('Despesa'));
+    document.getElementById('btn-new-despesa2')?.addEventListener('click',()=>showFinModal('Despesa'));
+    document.getElementById('btn-rel-fin')?.addEventListener('click',async()=>{
+      S.loading=true;render();
+      S.orders=await GET('/orders');
+      S.loading=false;render();
+    });
+    document.querySelectorAll('[data-mark-paid]').forEach(b=>b.addEventListener('click',async()=>{
+      try{
+        await PATCH('/orders/'+b.dataset.markPaid+'/payment',{paymentStatus:'Pago'});
+        S.orders=S.orders.map(o=>o._id===b.dataset.markPaid?{...o,paymentStatus:'Pago'}:o);
+        render();toast('✅ Pagamento confirmado!');
+      }catch(e){}
+    }));
+    document.querySelectorAll('[data-pay-bill]').forEach(b=>b.addEventListener('click',()=>{
+      const entries = JSON.parse(localStorage.getItem('fv_financial')||'[]');
+      const updated = entries.map(e=>e.id===b.dataset.payBill?{...e,status:'Pago',paidAt:new Date().toISOString()}:e);
+      localStorage.setItem('fv_financial',JSON.stringify(updated));
+      S.financialEntries=updated;render();toast('✅ Conta marcada como paga!');
+    }));
+  }
+  if(S.page==='relatorios'){
+    document.querySelectorAll('[data-rel-period]').forEach(b=>b.addEventListener('click',()=>{S._relPeriod=b.dataset.relPeriod;render();}));
+    document.getElementById('rel-unit-filter')?.addEventListener('change',e=>{S._relUnit=e.target.value;render();});
+    document.getElementById('btn-export-pdf')?.addEventListener('click',()=>window.print());
+  }
+  // Delivery fee
     document.getElementById('pdv-city-sel')?.addEventListener('change',e=>{
       PDV.city=e.target.value;PDV.zone='';PDV.deliveryFee=0;render();
     });
@@ -2125,9 +2543,21 @@ function bindPageActions(){
   }
   // IA
   if(S.page==='ia'){
-    document.getElementById('btn-chat-send')?.addEventListener('click',()=>{const el=document.getElementById('chat-input');sendChat(el.value);el.value='';});
-    document.getElementById('chat-input')?.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();document.getElementById('btn-chat-send').click();}});
-    document.querySelectorAll('.ia-sugg').forEach(b=>b.addEventListener('click',()=>{sendChat(b.dataset.sugg);}));
+    const sendMsg = () => {
+      const el=document.getElementById('chat-input');
+      if(!el||!el.value.trim()) return;
+      sendChat(el.value.trim());
+      el.value='';
+    };
+    document.getElementById('btn-chat-send')?.addEventListener('click', sendMsg);
+    document.getElementById('chat-input')?.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});
+    document.querySelectorAll('.ia-sugg').forEach(b=>b.addEventListener('click',()=>sendChat(b.dataset.sugg)));
+    document.getElementById('btn-copy-ia')?.addEventListener('click',()=>{
+      const last = S.chatHistory?.filter(m=>m.role==='assistant').slice(-1)[0]?.content||'';
+      navigator.clipboard.writeText(last).then(()=>toast('✅ Copiado!')).catch(()=>toast('❌ Erro ao copiar'));
+    });
+    // Scroll to bottom
+    setTimeout(()=>{const el=document.getElementById('chat-wrap');if(el)el.scrollTop=el.scrollHeight;},100);
   }
   // Config
   if(S.page==='config'){
@@ -2147,6 +2577,18 @@ function bindPageActions(){
         saveDeliveryFees();render();toast('✅ Zona adicionada!');
       }
     });
+    document.getElementById('btn-save-cfg')?.addEventListener('click',()=>{
+      const cfg={
+        razao:document.getElementById('cfg-razao')?.value,
+        cnpj:document.getElementById('cfg-cnpj')?.value,
+        ie:document.getElementById('cfg-ie')?.value,
+        whats:document.getElementById('cfg-whats')?.value,
+        addr:document.getElementById('cfg-addr')?.value,
+        email:document.getElementById('cfg-email')?.value,
+      };
+      localStorage.setItem('fv_config',JSON.stringify(cfg));
+      toast('✅ Dados salvos!');
+    });
     document.getElementById('btn-test-api')?.addEventListener('click',async()=>{try{const r=await fetch('https://florevita-backend.onrender.com/api/health');const d=await r.json();toast(d.db==='conectado'?'✅ Conectado!':'❌ Problema na conexão');}catch(e){toast('❌ API offline');}});
     document.getElementById('btn-sug')?.addEventListener('click',()=>{toast('💡 Sugestão enviada!');document.getElementById('sug-txt').value='';});
     // Notif template
@@ -2161,8 +2603,49 @@ function bindPageActions(){
   }
   // Estoque
   if(S.page==='estoque'){
-    document.getElementById('btn-stock-entry')?.addEventListener('click',()=>toast('Em breve: entrada de estoque'));
-    document.getElementById('btn-new-transfer')?.addEventListener('click',()=>toast('Em breve: transferência entre unidades'));
+    document.getElementById('stock-unit-filter')?.addEventListener('change',e=>{S._stockUnit=e.target.value;render();});
+    document.getElementById('btn-stock-entry')?.addEventListener('click',()=>showStockModal('','',  'Entrada'));
+    document.getElementById('btn-stock-exit')?.addEventListener('click',()=>showStockModal('','','Saída'));
+    document.getElementById('btn-new-transfer')?.addEventListener('click',showTransferModal);
+    document.getElementById('btn-new-transfer2')?.addEventListener('click',showTransferModal);
+    document.getElementById('btn-rel-prods')?.addEventListener('click',async()=>{
+      S.loading=true;render();
+      const [prods,moves]=await Promise.all([GET('/products'),GET('/stock/moves').catch(()=>[])]); 
+      S.products=prods||[];S.stockMoves=moves||[];
+      S.loading=false;render();
+    });
+    document.querySelectorAll('[data-sf]').forEach(b=>b.addEventListener('click',()=>{S._stockFilter=b.dataset.sf;render();}));
+    document.querySelectorAll('[data-stock-add]').forEach(b=>b.addEventListener('click',()=>showStockModal(b.dataset.stockAdd,b.dataset.stockName,'Entrada')));
+    document.querySelectorAll('[data-stock-rem]').forEach(b=>b.addEventListener('click',()=>showStockModal(b.dataset.stockRem,b.dataset.stockName,'Saída')));
+  }
+  if(S.page==='financeiro'){
+    document.getElementById('fin-unit-filter')?.addEventListener('change',e=>{S._finUnit=e.target.value;render();});
+    document.getElementById('btn-new-receita')?.addEventListener('click',()=>showFinModal('Receita'));
+    document.getElementById('btn-new-despesa')?.addEventListener('click',()=>showFinModal('Despesa'));
+    document.getElementById('btn-new-despesa2')?.addEventListener('click',()=>showFinModal('Despesa'));
+    document.getElementById('btn-rel-fin')?.addEventListener('click',async()=>{
+      S.loading=true;render();
+      S.orders=await GET('/orders');
+      S.loading=false;render();
+    });
+    document.querySelectorAll('[data-mark-paid]').forEach(b=>b.addEventListener('click',async()=>{
+      try{
+        await PATCH('/orders/'+b.dataset.markPaid+'/payment',{paymentStatus:'Pago'});
+        S.orders=S.orders.map(o=>o._id===b.dataset.markPaid?{...o,paymentStatus:'Pago'}:o);
+        render();toast('✅ Pagamento confirmado!');
+      }catch(e){}
+    }));
+    document.querySelectorAll('[data-pay-bill]').forEach(b=>b.addEventListener('click',()=>{
+      const entries = JSON.parse(localStorage.getItem('fv_financial')||'[]');
+      const updated = entries.map(e=>e.id===b.dataset.payBill?{...e,status:'Pago',paidAt:new Date().toISOString()}:e);
+      localStorage.setItem('fv_financial',JSON.stringify(updated));
+      S.financialEntries=updated;render();toast('✅ Conta marcada como paga!');
+    }));
+  }
+  if(S.page==='relatorios'){
+    document.querySelectorAll('[data-rel-period]').forEach(b=>b.addEventListener('click',()=>{S._relPeriod=b.dataset.relPeriod;render();}));
+    document.getElementById('rel-unit-filter')?.addEventListener('change',e=>{S._relUnit=e.target.value;render();});
+    document.getElementById('btn-export-pdf')?.addEventListener('click',()=>window.print());
   }
   // Delivery
   if(S.page==='delivery'||S.page==='entregador'){
@@ -2199,6 +2682,8 @@ function showFullImg(url){
 
 // ── INIT ─────────────────────────────────────────────────────
 async function init(){
+  // Load local financial entries
+  S.financialEntries = JSON.parse(localStorage.getItem('fv_financial')||'[]');
   if(loadSession()){S.loading=true;render();await loadData();S.loading=false;}
   render();
 }
