@@ -233,6 +233,8 @@ let S = {
   user: null, token: null, page: 'dashboard',
   clients:[], products:[], orders:[], users:[], _userSearch:'',
   stockMoves:[], _stockFilter:'todos', _stockUnit:'',
+  _prodDate:'', _prodShift:'Todos', _expDate:'',
+  _printedCard:{}, _printedComanda:{}, _expDate:'',
   financialEntries:[], _relPeriod:'mes', _relUnit:'', _finUnit:'', _iaLoading:false,
   _userSearch:'',
   loading:false, toast:null, sidebarOpen:false,
@@ -752,7 +754,10 @@ function renderPedidos(){
     <td style="font-weight:600">${$c(o.total)}</td>
     <td style="font-size:11px;color:var(--muted)">${o.scheduledDate?$d(o.scheduledDate)+' '+( o.scheduledPeriod||''):'—'}</td>
     <td><span class="tag ${sc(o.status)}">${o.status}</span></td>
-    <td><button class="btn btn-ghost btn-xs" data-adv="${o._id}">▶</button></td>
+    <td style="display:flex;gap:4px;">
+      <button class="btn btn-ghost btn-xs" data-adv="${o._id}">▶</button>
+      <button class="btn btn-ghost btn-xs" data-edit-order="${o._id}">✏️</button>
+    </td>
   </tr>`).join('')}</tbody></table></div>`}
 </div>`;
 }
@@ -944,167 +949,243 @@ ${low.length>0?`<div class="alert al-warn">⚠️ <strong>${low.length} itens co
 
 // ── PRODUÇÃO ─────────────────────────────────────────────────
 function renderProducao(){
-  const queue=S.orders.filter(o=>['Aguardando','Em preparo'].includes(o.status));
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const selectedDate = S._prodDate || today.toISOString().split('T')[0];
+  const isToday = selectedDate === today.toISOString().split('T')[0];
+  
+  // Filter orders for selected date
+  const allQueue = S.orders.filter(o=>['Aguardando','Em preparo','Pronto'].includes(o.status));
+  
+  const forDate = allQueue.filter(o=>{
+    if(!o.scheduledDate) return isToday; // sem data = para hoje
+    const d = new Date(o.scheduledDate);
+    d.setHours(0,0,0,0);
+    const sel = new Date(selectedDate);
+    sel.setHours(0,0,0,0);
+    return d.getTime()===sel.getTime();
+  });
+
+  const byShift = {
+    'Manhã': forDate.filter(o=>o.scheduledPeriod==='Manhã'||!o.scheduledPeriod),
+    'Tarde': forDate.filter(o=>o.scheduledPeriod==='Tarde'),
+    'Noite': forDate.filter(o=>o.scheduledPeriod==='Noite'),
+    'Horário específico': forDate.filter(o=>o.scheduledPeriod==='Horário específico'),
+  };
+
+  const activeShift = S._prodShift||'Todos';
+  const shiftFiltered = activeShift==='Todos' ? forDate : (byShift[activeShift]||[]);
+
   return`
 <div class="g4" style="margin-bottom:16px;">
-  <div class="mc rose"><div class="mc-label">Aguardando</div><div class="mc-val">${S.orders.filter(o=>o.status==='Aguardando').length}</div></div>
-  <div class="mc gold"><div class="mc-label">Em Produção</div><div class="mc-val">${S.orders.filter(o=>o.status==='Em preparo').length}</div></div>
-  <div class="mc leaf"><div class="mc-label">Prontos</div><div class="mc-val">${S.orders.filter(o=>o.status==='Pronto').length}</div></div>
-  <div class="mc purple"><div class="mc-label">Turno Atual</div><div class="mc-val" style="font-size:16px">Tarde</div></div>
+  <div class="mc rose"><div class="mc-label">Para ${isToday?'Hoje':'Esta Data'}</div><div class="mc-val">${forDate.length}</div></div>
+  <div class="mc gold"><div class="mc-label">Em Produção</div><div class="mc-val">${forDate.filter(o=>o.status==='Em preparo').length}</div></div>
+  <div class="mc leaf"><div class="mc-label">Prontos</div><div class="mc-val">${forDate.filter(o=>o.status==='Pronto').length}</div></div>
+  <div class="mc purple"><div class="mc-label">Aguardando</div><div class="mc-val">${forDate.filter(o=>o.status==='Aguardando').length}</div></div>
 </div>
-<div class="card">
-  <div class="card-title">Fila de Produção
-    <div style="display:flex;gap:6px">
-      <button class="btn btn-ghost btn-sm" id="btn-rel-orders">🔄</button>
+
+<div class="card" style="margin-bottom:14px;">
+  <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button class="btn btn-sm ${isToday?'btn-primary':'btn-ghost'}" id="btn-prod-today">📅 Hoje</button>
+      <input type="date" class="fi" id="prod-date-picker" value="${selectedDate}" style="width:160px;"/>
     </div>
-  </div>
-  <div class="tabs">
-    <button class="tab active">Todos</button>
-    <button class="tab">☀️ Manhã</button>
-    <button class="tab">🌤️ Tarde</button>
-    <button class="tab">🌙 Noite</button>
-  </div>
-  ${queue.length===0?`<div class="empty"><div class="empty-icon">🌿</div><p>Sem pedidos na fila</p></div>`:
-  queue.map(o=>`
-  <div class="prod-queue-card ${o.scheduledPeriod==='Manhã'?'urgent':''}">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
-      <div>
-        <span style="font-weight:700;color:var(--rose)">${o.orderNumber}</span>
-        <span class="tag ${sc(o.status)}" style="margin-left:8px">${o.status}</span>
-      </div>
-      <div style="text-align:right;font-size:11px;color:var(--muted)">${o.scheduledDate?$d(o.scheduledDate):''} ${o.scheduledPeriod||''}</div>
+    <div style="display:flex;gap:4px;">
+      ${['Todos','Manhã','Tarde','Noite','Horário específico'].map(s=>`
+      <button class="btn btn-xs ${activeShift===s?'btn-primary':'btn-ghost'}" data-shift="${s}">
+        ${s==='Manhã'?'☀️':s==='Tarde'?'🌤️':s==='Noite'?'🌙':s==='Horário específico'?'🕐':'📋'} ${s}
+        ${s!=='Todos'&&byShift[s]?.length?`(${byShift[s].length})`:''}
+      </button>`).join('')}
     </div>
-    <div style="display:flex;gap:12px;align-items:flex-start;">
+    <button class="btn btn-ghost btn-sm" id="btn-rel-orders">🔄</button>
+  </div>
+</div>
+
+${shiftFiltered.length===0?`
+<div class="empty card">
+  <div class="empty-icon">🌿</div>
+  <p>Nenhum pedido para ${isToday?'hoje':$d(selectedDate)} ${activeShift!=='Todos'?'no turno '+activeShift:''}</p>
+</div>`:`
+
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;">
+${shiftFiltered.map(o=>{
+  const isLate = o.scheduledPeriod==='Manhã' && new Date().getHours()>=12 && o.status!=='Pronto';
+  const isUrgent = o.scheduledPeriod==='Tarde' && new Date().getHours()>=16 && o.status!=='Pronto';
+  return`
+  <div style="background:#fff;border-radius:var(--rl);border:1px solid ${isLate?'var(--red)':isUrgent?'var(--gold)':'var(--border)'};padding:16px;box-shadow:var(--shadow);">
+    ${isLate?`<div class="tag t-red" style="margin-bottom:8px">🔴 ATRASADO</div>`:isUrgent?`<div class="tag t-gold" style="margin-bottom:8px">⚡ URGENTE</div>`:''}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <span style="font-weight:700;color:var(--rose);font-size:16px">${o.orderNumber}</span>
+      <span class="tag ${sc(o.status)}">${o.status}</span>
+    </div>
+
+    <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;">
+      <span class="tag t-gray">${o.scheduledPeriod||'Sem turno'}</span>
+      ${o.scheduledTime?`<span class="tag t-blue">🕐 ${o.scheduledTime}</span>`:''}
+      ${o.type==='Delivery'?`<span class="tag t-purple">🚚 Delivery</span>`:`<span class="tag t-gray">🏪 ${o.type||'Balcão'}</span>`}
+    </div>
+
+    <!-- PRODUTOS COM FOTO -->
+    <div style="margin-bottom:10px;">
       ${(o.items||[]).map(i=>{
-        const prod=S.products.find(p=>p._id===i.product||p.name===i.name);
-        return prod?.images?.[0]?`<img src="${prod.images[0]}" style="width:72px;height:72px;border-radius:8px;object-fit:contain;flex-shrink:0;background:var(--cream);border:1px solid var(--border)" onclick="showFullImg('${prod.images[0]}')">`:'';
+        const prod = S.products.find(p=>p._id===i.product||p.name===i.name);
+        return`<div style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--cream);border-radius:var(--r);margin-bottom:6px;">
+          ${prod?.images?.[0]
+            ?`<img src="${prod.images[0]}" style="width:56px;height:56px;border-radius:8px;object-fit:contain;background:#fff;border:1px solid var(--border);flex-shrink:0" onclick="showFullImg('${prod.images[0]}')" title="Clique para ampliar"/>`
+            :`<div style="width:56px;height:56px;border-radius:8px;background:var(--rose-l);display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">${emoji(prod?.category||i.name)}</div>`}
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600">${i.qty}x ${i.name}</div>
+            ${prod?.productionNotes?`<div style="font-size:11px;color:var(--muted);margin-top:2px">📋 ${prod.productionNotes}</div>`:''}
+          </div>
+        </div>`;
       }).join('')}
-      <div style="flex:1">
-        <div style="font-size:13px;font-weight:500;margin-bottom:4px">${(o.items||[]).map(i=>`${i.qty}x ${i.name}`).join(', ')}</div>
-        ${o.recipient?`<div style="font-size:11px;color:var(--muted)">Para: <strong>${o.recipient}</strong></div>`:''}
-        ${o.cardMessage?`<div style="font-size:11px;color:var(--ink2);background:var(--petal);padding:5px 8px;border-radius:6px;margin-top:4px;">"${o.cardMessage}"</div>`:''}
-        ${o.notes?`<div style="font-size:11px;color:var(--muted);margin-top:4px">Obs: ${o.notes}</div>`:''}
-      </div>
     </div>
-    <div style="margin-top:10px;display:flex;gap:6px;">
+
+    <!-- DESTINATÁRIO E CARTÃO -->
+    ${o.recipient?`<div style="font-size:12px;margin-bottom:6px;">👤 <strong>Para:</strong> ${o.recipient}</div>`:''}
+    ${o.cardMessage?`<div style="background:var(--petal);border-radius:var(--r);padding:8px 10px;font-size:12px;color:var(--ink2);margin-bottom:8px;font-style:italic;">"${o.cardMessage}"</div>`:''}
+    ${o.notes?`<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">📝 ${o.notes}</div>`:''}
+
+    <!-- ENDEREÇO -->
+    ${o.deliveryAddress?`<div style="font-size:11px;color:var(--muted);margin-bottom:10px;">📍 ${o.deliveryAddress}</div>`:''}
+
+    <!-- AÇÕES -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
       ${o.status==='Aguardando'?`<button class="btn btn-primary btn-sm" data-prod-start="${o._id}">▶ Iniciar Produção</button>`:''}
       ${o.status==='Em preparo'?`<button class="btn btn-green btn-sm" data-prod-done="${o._id}">✅ Pronto p/ Expedição</button>`:''}
+      ${o.status==='Pronto'?`<div class="tag t-green" style="padding:6px 12px;">✅ Pronto para sair</div>`:''}
     </div>
-  </div>`).join('')}
-</div>`;
+  </div>`;
+}).join('')}
+</div>`}`;
 }
+
 
 // ── EXPEDIÇÃO ────────────────────────────────────────────────
 function renderExpedicao(){
-  const allDelivery = S.orders.filter(o=>['Pronto','Saiu p/ entrega','Aguardando','Em preparo'].includes(o.status) && o.type==='Delivery');
-  const prontos = S.orders.filter(o=>o.status==='Pronto');
-  const emRota = S.orders.filter(o=>o.status==='Saiu p/ entrega');
-  const sorted = sortOrdersByPriority(allDelivery);
-  
-  // Check for critical orders and play alert
-  const hasCritical = allDelivery.some(o=>['late','critical'].includes(getDeliveryRisk(o)));
-  if (hasCritical && !window._alertPlayed) { window._alertPlayed = true; playAlert(); setTimeout(()=>{window._alertPlayed=false;}, 60000); }
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const selectedDate = S._expDate || today.toISOString().split('T')[0];
+  const isToday = selectedDate === today.toISOString().split('T')[0];
+
+  // Pedidos prontos para expedir na data selecionada
+  const forDate = S.orders.filter(o=>{
+    if(!['Pronto','Saiu p/ entrega'].includes(o.status)) return false;
+    if(!o.scheduledDate) return isToday;
+    const d = new Date(o.scheduledDate);
+    d.setHours(0,0,0,0);
+    const sel = new Date(selectedDate);
+    sel.setHours(0,0,0,0);
+    return d.getTime()===sel.getTime();
+  });
+
+  const prontos = forDate.filter(o=>o.status==='Pronto');
+  const emRota = forDate.filter(o=>o.status==='Saiu p/ entrega');
+  const entregadores = S.users.filter(u=>u.role==='Entregador'&&u.active!==false);
 
   return`
 <div class="g4" style="margin-bottom:16px;">
-  <div class="mc leaf"><div class="mc-label">Prontos</div><div class="mc-val">${prontos.length}</div></div>
+  <div class="mc leaf"><div class="mc-label">Prontos p/ Saída</div><div class="mc-val">${prontos.length}</div></div>
   <div class="mc gold"><div class="mc-label">Em Rota</div><div class="mc-val">${emRota.length}</div></div>
-  <div class="mc rose"><div class="mc-label">Entregues Hoje</div><div class="mc-val">${S.orders.filter(o=>o.status==='Entregue').length}</div></div>
-  <div class="mc purple"><div class="mc-label">Com Risco</div><div class="mc-val" style="color:var(--red)">${allDelivery.filter(o=>['late','critical'].includes(getDeliveryRisk(o))).length}</div></div>
+  <div class="mc rose"><div class="mc-label">Entregues Hoje</div><div class="mc-val">${S.orders.filter(o=>o.status==='Entregue'&&new Date(o.createdAt).toDateString()===new Date().toDateString()).length}</div></div>
+  <div class="mc purple"><div class="mc-label">Entregadores</div><div class="mc-val">${entregadores.length}</div></div>
 </div>
 
-${hasCritical ? `<div class="alert al-err" style="animation:pulse 1s ease infinite">🚨 <strong>ATENÇÃO!</strong> Há pedidos com risco de atraso. Verifique a fila abaixo!</div>` : ''}
+<div class="card" style="margin-bottom:14px;">
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <button class="btn btn-sm ${isToday?'btn-primary':'btn-ghost'}" id="btn-exp-today">📅 Hoje</button>
+    <input type="date" class="fi" id="exp-date-picker" value="${selectedDate}" style="width:160px;"/>
+    <button class="btn btn-ghost btn-sm" id="btn-rel-orders">🔄 Atualizar</button>
+    <span style="font-size:12px;color:var(--muted);">${isToday?'Entregas de hoje':'Entregas de '+$d(selectedDate)}</span>
+  </div>
+</div>
+
+${forDate.length===0?`
+<div class="empty card">
+  <div class="empty-icon">📤</div>
+  <p>Nenhuma entrega ${isToday?'para hoje':'para '+$d(selectedDate)}</p>
+</div>`:`
 
 <div class="g2">
-<div>
-  <div class="card">
-    <div class="card-title">📋 Fila de Entregas — Prioridade Inteligente
-      <div style="display:flex;gap:6px">
-        <button class="btn btn-ghost btn-sm" id="btn-rel-orders">🔄 Atualizar</button>
+  <div>
+    <div class="card">
+      <div class="card-title">📦 Prontos para Expedir
+        <span class="notif">${prontos.length}</span>
       </div>
-    </div>
-    <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
-      <span style="font-size:11px;padding:3px 8px;background:var(--red-l);color:var(--red);border-radius:20px">🚨 Atrasado</span>
-      <span style="font-size:11px;padding:3px 8px;background:#FFF0E6;color:#FF6B00;border-radius:20px">⚠️ Crítico &lt;1h</span>
-      <span style="font-size:11px;padding:3px 8px;background:var(--gold-l);color:var(--gold);border-radius:20px">⏰ Atenção &lt;2h</span>
-      <span style="font-size:11px;padding:3px 8px;background:var(--leaf-l);color:var(--leaf);border-radius:20px">✅ OK</span>
-    </div>
-    ${sorted.length===0 ? `<div class="empty"><div class="empty-icon">🚚</div><p>Sem entregas pendentes</p></div>` :
-    sorted.map((o,idx) => {
-      const risk = getDeliveryRisk(o);
-      const riskColor = getRiskColor(risk);
-      const riskLabel = getRiskLabel(risk);
-      const borderColor = {late:'var(--red)',critical:'#FF6B00',warning:'var(--gold)',ok:'var(--leaf)',none:'var(--border)'}[risk];
-      return `
-      <div style="border:1px solid ${borderColor};border-left:4px solid ${borderColor};border-radius:var(--r);padding:12px;margin-bottom:10px;background:${risk==='late'?'#FFF5F5':risk==='critical'?'#FFF8F0':'#fff'}">
+      ${prontos.length===0?`<div class="empty"><p>Nenhum pedido pronto</p></div>`:''}
+      ${prontos.map(o=>`
+      <div style="background:var(--leaf-l);border-radius:var(--r);padding:14px;margin-bottom:10px;border:1px solid rgba(45,106,79,.2);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span style="background:var(--rose);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${idx+1}</span>
-            <span style="font-weight:700;color:var(--rose)">${o.orderNumber}</span>
-            <span class="tag ${sc(o.status)}">${o.status}</span>
-          </div>
-          <span style="font-size:11px;font-weight:600;color:${riskColor}">${riskLabel}</span>
-        </div>
-        <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:8px;">
-          <div style="flex:1;">
-            <div style="font-size:13px;font-weight:500">${o.client?.name||o.clientName||'—'}</div>
-            <div style="font-size:11px;color:var(--muted)">📍 ${o.deliveryAddress||'—'}</div>
-            ${o.isCondominium ? `<div style="font-size:11px;color:var(--blue)">🏢 Bloco ${o.block} Ap ${o.apt}</div>` : ''}
-            <div style="font-size:11px;color:var(--muted);margin-top:2px">🕐 ${o.scheduledPeriod||'—'} ${o.scheduledTime||''} ${o.scheduledDate?'· '+new Date(o.scheduledDate).toLocaleDateString('pt-BR'):''}</div>
+          <span style="font-weight:700;color:var(--rose);font-size:15px">${o.orderNumber}</span>
+          <div style="display:flex;gap:4px;">
+            <span class="tag t-gold">${o.scheduledPeriod||'—'}</span>
+            ${o.scheduledTime?`<span class="tag t-blue">🕐 ${o.scheduledTime}</span>`:''}
           </div>
         </div>
-        ${risk==='late'||risk==='critical' ? `<div style="background:${risk==='late'?'var(--red-l)':'#FFF0E6'};border-radius:6px;padding:6px 10px;font-size:11px;color:${riskColor};font-weight:600;margin-bottom:8px;">
-          ${risk==='late'?'🚨 PEDIDO ATRASADO — Entrar em contato imediatamente!':'⚠️ Menos de 1h para o horário de entrega — Prioridade máxima!'}
-        </div>` : ''}
-        <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          ${o.status==='Pronto' ? `
-          <select class="fi" id="driver-${o._id}" style="flex:1;padding:5px 8px;font-size:11px;">
-            <option value="">Escolher entregador...</option>
-            <option>Entregador 1</option>
-            <option>Entregador 2</option>
+
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px">${o.client?.name||o.clientName||'—'}</div>
+        ${o.recipient?`<div style="font-size:12px;color:var(--muted)">👤 Para: ${o.recipient}</div>`:''}
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">📍 ${o.deliveryAddress||'Retirada'}</div>
+
+        <div style="font-size:12px;margin-bottom:10px;"><strong>Itens:</strong> ${(o.items||[]).map(i=>`${i.qty}x ${i.name}`).join(', ')}</div>
+
+        ${o.cardMessage?`
+        <div style="background:var(--petal);border-radius:var(--r);padding:10px 12px;margin-bottom:10px;border-left:3px solid var(--rose);">
+          <div style="font-size:10px;color:var(--rose);font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">💌 Mensagem do Cartão</div>
+          <div style="font-size:12px;font-style:italic;color:var(--ink2)">"${o.cardMessage}"</div>
+          ${o.identifyClient!==false?`<div style="font-size:10px;color:var(--muted);margin-top:4px">✅ Identificar remetente: ${o.client?.name||o.clientName||'—'}</div>`:`<div style="font-size:10px;color:var(--muted);margin-top:4px">👤 Envio anônimo</div>`}
+        </div>`:''}
+
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+          <button class="btn btn-sm ${S._printedCard?.[o._id]?'btn-green':'btn-outline'}" 
+            data-print-card="${o._id}" 
+            title="Imprimir Cartão"
+            style="display:flex;align-items:center;gap:4px;">
+            🖨️ Cartão ${S._printedCard?.[o._id]?'<span style=\"font-size:10px\">(✅ Impresso)</span>':''}
+          </button>
+          <button class="btn btn-sm ${S._printedComanda?.[o._id]?'btn-green':'btn-outline'}" 
+            data-print-comanda="${o._id}"
+            title="Imprimir Comanda de Entrega"
+            style="display:flex;align-items:center;gap:4px;">
+            🖨️ Comanda ${S._printedComanda?.[o._id]?'<span style=\"font-size:10px\">(✅ Impresso)</span>':''}
+          </button>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <select class="fi" id="exp-driver-${o._id}" style="flex:1;min-width:160px;padding:6px 10px;font-size:12px;">
+            <option value="">⚠️ Escolher entregador *</option>
+            ${entregadores.map(u=>`<option value="${u._id}">${u.name}</option>`).join('')}
           </select>
-          <button class="btn btn-primary btn-sm" data-exp="${o._id}">🚚 Expedir</button>` : ''}
-          ${o.status==='Saiu p/ entrega' ? `<button class="btn btn-green btn-sm" data-adv="${o._id}">✅ Marcar Entregue</button>` : ''}
-          ${o.status==='Aguardando'||o.status==='Em preparo' ? `<span style="font-size:11px;color:var(--muted)">Aguardando produção...</span>` : ''}
-          <a href="https://maps.google.com/?q=${encodeURIComponent(o.deliveryAddress||'')}" target="_blank" class="btn btn-ghost btn-sm">🗺️ Rota</a>
+          <button class="btn btn-primary btn-sm" data-expedir="${o._id}">🚚 Expedir</button>
         </div>
-      </div>`;
-    }).join('')}
-  </div>
-</div>
-<div>
-  <div class="card">
-    <div class="card-title">🗺️ Otimização de Rota</div>
-    <div style="background:var(--cream);border-radius:var(--r);padding:16px;text-align:center;border:1px dashed var(--border);margin-bottom:12px;">
-      <div style="font-size:36px;margin-bottom:8px">🗺️</div>
-      <div style="font-size:12px;font-weight:500;margin-bottom:4px">Rota Inteligente</div>
-      <div style="font-size:11px;color:var(--muted)">Organize as entregas por bairro para economizar tempo e combustível</div>
+      </div>`).join('')}
     </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
-      <button class="btn btn-outline btn-sm" id="btn-sort-time">🕐 Por Horário</button>
-      <button class="btn btn-outline btn-sm" id="btn-sort-region">📍 Por Região</button>
-      <button class="btn btn-primary btn-sm" id="btn-sort-priority">🔴 Por Prioridade</button>
-    </div>
-    <hr/>
-    <div class="card-title" style="font-size:13px">📊 Resumo do Dia</div>
-    ${['Manhã','Tarde','Noite'].map(t => {
-      const t_orders = allDelivery.filter(o=>o.scheduledPeriod===t);
-      return `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">
-        <span>${t==='Manhã'?'☀️':'🌤️'} ${t}</span>
-        <span style="font-weight:600">${t_orders.length} entregas</span>
-      </div>`;
-    }).join('')}
   </div>
 
-  <div class="card" style="margin-top:16px;">
-    <div class="card-title">📲 Notificação ao Cliente</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Mensagem enviada automaticamente quando pedido é marcado como Entregue</div>
-    <textarea class="fi" id="delivery-msg-template" rows="4" placeholder="Mensagem padrão...">${localStorage.getItem('fv_delivery_msg')||'Olá, {nome}! 🌸 Seu pedido {pedido} foi entregue com sucesso. Esperamos que tenha amado! 💖 Floricultura Laços Eternos'}</textarea>
-    <div style="font-size:10px;color:var(--muted);margin:6px 0 10px;">Variáveis: {nome} {pedido} {produto} {data} {floricultura}</div>
-    <button class="btn btn-green btn-sm" id="btn-save-msg">💾 Salvar Mensagem</button>
+  <div>
+    <div class="card">
+      <div class="card-title">🚚 Em Rota
+        <span class="notif">${emRota.length}</span>
+      </div>
+      ${emRota.length===0?`<div class="empty"><p>Nenhum pedido em rota</p></div>`:''}
+      ${emRota.map(o=>`
+      <div style="background:var(--purple-l);border-radius:var(--r);padding:12px;margin-bottom:8px;border:1px solid rgba(124,58,237,.2);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-weight:700;color:var(--rose)">${o.orderNumber}</span>
+          <span class="tag t-purple">Em Rota</span>
+        </div>
+        <div style="font-size:12px;font-weight:500">${o.client?.name||o.clientName||'—'}</div>
+        ${o.recipient?`<div style="font-size:11px;color:var(--muted)">Para: ${o.recipient}</div>`:''}
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">📍 ${o.deliveryAddress||'—'}</div>
+        <div style="font-size:11px;margin-bottom:8px;"><strong>Itens:</strong> ${(o.items||[]).map(i=>`${i.qty}x ${i.name}`).join(', ')}</div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-green btn-sm" data-confirm="${o._id}">✅ Confirmar Entrega</button>
+          <a href="https://maps.google.com/?q=${encodeURIComponent(o.deliveryAddress||'')}" target="_blank" class="btn btn-blue btn-sm">🗺️ Rota</a>
+        </div>
+      </div>`).join('')}
+    </div>
   </div>
-</div>
-</div>`;
+</div>`}`;
 }
 
 
@@ -1535,6 +1616,95 @@ async function toggleUserActive(id, currentActive){
     S.users=S.users.map(x=>x._id===id?{...x,active:!currentActive}:x);
     render();toast(!currentActive?'✅ Usuário ativado!':'🔒 Usuário desativado!');
   }catch(e){}
+}
+
+// ── PRINT FUNCTIONS ─────────────────────────────────────────
+function printCard(orderId){
+  const o = S.orders.find(x=>x._id===orderId);
+  if(!o) return;
+  const cfg = JSON.parse(localStorage.getItem('fv_config')||'{}');
+  const w = window.open('','_blank','width=400,height=300');
+  w.document.write(`
+  <html><head><title>Cartão — ${o.orderNumber}</title>
+  <style>
+    body{font-family:'Georgia',serif;padding:30px;max-width:380px;margin:0 auto;}
+    .borda{border:2px solid #C8436A;border-radius:12px;padding:24px;}
+    .logo{text-align:center;font-size:18px;color:#C8436A;font-weight:bold;margin-bottom:16px;}
+    .msg{font-size:16px;line-height:1.8;color:#1A0A10;text-align:center;font-style:italic;margin-bottom:16px;}
+    .dest{text-align:center;font-size:13px;color:#4A2038;margin-bottom:8px;}
+    .anon{text-align:center;font-size:11px;color:#9E8090;}
+    @media print{body{padding:10px}button{display:none}}
+  </style></head>
+  <body>
+  <div class="borda">
+    <div class="logo">🌺 ${cfg.razao||'Laços Eternos'}</div>
+    <div class="dest">Para: <strong>${o.recipient||'—'}</strong></div>
+    <div class="msg">"${o.cardMessage||'Com muito carinho! 🌸'}"</div>
+    ${o.identifyClient!==false?`<div class="anon">Com carinho de: ${o.client?.name||o.clientName||'—'}</div>`:'<div class="anon">💝</div>'}
+  </div>
+  <div style="text-align:center;margin-top:12px;">
+    <button onclick="window.print();window.close()" style="background:#C8436A;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;">🖨️ Imprimir</button>
+  </div>
+  </body></html>
+  `);
+  w.document.close();
+  S._printedCard = {...(S._printedCard||{}), [orderId]:true};
+  render();
+}
+
+function printComanda(orderId){
+  const o = S.orders.find(x=>x._id===orderId);
+  if(!o) return;
+  const cfg = JSON.parse(localStorage.getItem('fv_config')||'{}');
+  const w = window.open('','_blank','width=500,height=600');
+  w.document.write(`
+  <html><head><title>Comanda — ${o.orderNumber}</title>
+  <style>
+    body{font-family:'Arial',sans-serif;padding:20px;max-width:480px;margin:0 auto;font-size:13px;}
+    h2{color:#C8436A;border-bottom:2px solid #C8436A;padding-bottom:8px;}
+    .row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed #ddd;}
+    .label{color:#666;font-size:12px;}
+    .val{font-weight:600;}
+    .items{background:#f9f9f9;padding:10px;border-radius:6px;margin:10px 0;}
+    .msg-cartao{background:#FDF4F7;border-left:3px solid #C8436A;padding:10px;margin:10px 0;font-style:italic;}
+    .footer{text-align:center;margin-top:20px;font-size:11px;color:#999;}
+    @media print{button{display:none}}
+  </style></head>
+  <body>
+  <h2>🚚 Comanda de Entrega</h2>
+  <div class="row"><span class="label">Pedido</span><span class="val">${o.orderNumber}</span></div>
+  <div class="row"><span class="label">Data Emissão</span><span class="val">${new Date().toLocaleString('pt-BR')}</span></div>
+  <div class="row"><span class="label">Data Entrega</span><span class="val">${o.scheduledDate?new Date(o.scheduledDate).toLocaleDateString('pt-BR'):'—'} ${o.scheduledPeriod||''} ${o.scheduledTime||''}</span></div>
+  <div class="row"><span class="label">Cliente</span><span class="val">${o.client?.name||o.clientName||'—'}</span></div>
+  <div class="row"><span class="label">WhatsApp</span><span class="val">${o.clientPhone||o.client?.phone||'—'}</span></div>
+  <div class="row"><span class="label">Destinatário</span><span class="val">${o.recipient||'—'}</span></div>
+  <div class="row"><span class="label">Endereço</span><span class="val">${o.deliveryAddress||'Retirada'}</span></div>
+  ${o.isCondominium?`<div class="row"><span class="label">Condomínio</span><span class="val">Bloco ${o.block} — Ap ${o.apt}</span></div>`:''}
+  ${o.deliveryReference?`<div class="row"><span class="label">Referência</span><span class="val">${o.deliveryReference}</span></div>`:''}
+  
+  <div class="items">
+    <div style="font-weight:bold;margin-bottom:6px;">📦 Itens do Pedido:</div>
+    ${(o.items||[]).map(i=>`<div style="padding:3px 0;">• ${i.qty}x ${i.name} — R$ ${(i.totalPrice||0).toFixed(2).replace('.',',')}</div>`).join('')}
+  </div>
+  
+  ${o.cardMessage?`<div class="msg-cartao">💌 Cartão: "${o.cardMessage}"<br>${o.identifyClient!==false?`<small>De: ${o.client?.name||o.clientName||'—'}</small>`:''}</div>`:''}
+  ${o.notes?`<div style="padding:8px;background:#fff3cd;border-radius:4px;margin:8px 0;">📝 Obs: ${o.notes}</div>`:''}
+
+  <div class="row"><span class="label">Pagamento</span><span class="val">${o.payment||'—'}</span></div>
+  <div class="row"><span class="label">Total</span><span class="val" style="color:#C8436A;font-size:16px;">R$ ${(o.total||0).toFixed(2).replace('.',',')}</span></div>
+  
+  <div class="footer">
+    ${cfg.razao||'Laços Eternos Floricultura'} — ${cfg.whats||'(92) 99300-2433'}<br>
+    Gerado em ${new Date().toLocaleString('pt-BR')}
+  </div>
+  <div style="text-align:center;margin-top:12px;">
+    <button onclick="window.print();window.close()" style="background:#C8436A;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;">🖨️ Imprimir</button>
+  </div>
+  </body></html>
+  `);
+  w.document.close();
+  S._printedComanda = {...(S._printedComanda||{}), [orderId]:true};
+  render();
 }
 
 // ── ESTOQUE MODALS ───────────────────────────────────────────
@@ -2503,6 +2673,7 @@ function bindPageActions(){
   if(S.page==='pedidos'){
     document.querySelectorAll('[data-st]').forEach(b=>b.addEventListener('click',()=>{S._pdidoFilter=b.dataset.st;render();}));
     document.querySelectorAll('[data-adv]').forEach(b=>b.addEventListener('click',()=>advanceOrder(b.dataset.adv)));
+    document.querySelectorAll('[data-edit-order]').forEach(b=>b.addEventListener('click',()=>showEditOrderModal(b.dataset.editOrder)));
     document.getElementById('btn-rel-orders')?.addEventListener('click',async()=>{S.loading=true;render();S.orders=await GET('/orders');S.loading=false;render();});
   }
   // Clientes
@@ -2522,6 +2693,13 @@ function bindPageActions(){
   // Produção
   if(S.page==='producao'){
     document.getElementById('btn-rel-orders')?.addEventListener('click',async()=>{S.loading=true;render();S.orders=await GET('/orders');S.loading=false;render();});
+    document.getElementById('btn-prod-today')?.addEventListener('click',()=>{
+      S._prodDate=new Date().toISOString().split('T')[0];render();
+    });
+    document.getElementById('prod-date-picker')?.addEventListener('change',e=>{
+      S._prodDate=e.target.value;render();
+    });
+    document.querySelectorAll('[data-shift]').forEach(b=>b.addEventListener('click',()=>{S._prodShift=b.dataset.shift;render();}));
     document.querySelectorAll('[data-prod-start]').forEach(b=>b.addEventListener('click',()=>advanceOrder(b.dataset.prodStart)));
     document.querySelectorAll('[data-prod-done]').forEach(b=>b.addEventListener('click',()=>advanceOrder(b.dataset.prodDone)));
   }
@@ -2540,6 +2718,8 @@ function bindPageActions(){
   // Entregador
   if(S.page==='entregador'){
     document.querySelectorAll('[data-confirm]').forEach(b=>b.addEventListener('click',()=>advanceOrder(b.dataset.confirm)));
+    document.querySelectorAll('[data-print-card]').forEach(b=>b.addEventListener('click',()=>printCard(b.dataset.printCard)));
+    document.querySelectorAll('[data-print-comanda]').forEach(b=>b.addEventListener('click',()=>printComanda(b.dataset.printComanda)));
   }
   // IA
   if(S.page==='ia'){
