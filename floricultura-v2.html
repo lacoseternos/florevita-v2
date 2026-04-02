@@ -133,6 +133,7 @@ tr:hover td{background:var(--petal);}
 hr{border:none;border-top:1px solid var(--border);margin:12px 0;}
 .empty{text-align:center;padding:32px 20px;color:var(--muted);}
 .empty-icon{font-size:36px;margin-bottom:8px;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.6}}
 .spin{display:inline-block;width:20px;height:20px;border:2px solid var(--rose-l);border-top-color:var(--rose);border-radius:50%;animation:sp .7s linear infinite;}
 @keyframes sp{to{transform:rotate(360deg)}}
 .loading{position:fixed;inset:0;background:rgba(255,255,255,.85);z-index:999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;}
@@ -175,7 +176,9 @@ hr{border:none;border-top:1px solid var(--border);margin:12px 0;}
 /* IMG UPLOAD */
 .img-up{border:2px dashed var(--border);border-radius:var(--r);padding:20px;text-align:center;cursor:pointer;transition:all .2s;}
 .img-up:hover{border-color:var(--rose);background:var(--petal);}
-.img-prev{width:100%;max-height:160px;object-fit:cover;border-radius:var(--r);}
+.img-prev{width:100%;height:200px;object-fit:contain;border-radius:var(--r);background:var(--cream);}
+.img-prev-thumb{width:80px;height:80px;object-fit:cover;border-radius:8px;border:2px solid var(--border);}
+.code-badge{font-family:monospace;font-size:11px;background:var(--cream);border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--ink2);}
 
 /* IA CHAT */
 .chat-wrap{height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r);padding:12px;background:var(--cream);}
@@ -189,6 +192,24 @@ hr{border:none;border-top:1px solid var(--border);margin:12px 0;}
 /* COMMISSION */
 .comm-bar{height:8px;border-radius:4px;background:#F3F4F6;overflow:hidden;margin-top:4px;}
 .comm-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--rose),var(--rose-d));}
+
+
+/* DELIVERY SMART */
+.delivery-priority{border-left:4px solid var(--red)!important;animation:pulse-red 2s infinite;}
+.delivery-warning{border-left:4px solid var(--gold)!important;}
+.delivery-ok{border-left:4px solid var(--leaf)!important;}
+@keyframes pulse-red{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0.3)}50%{box-shadow:0 0 0 6px rgba(220,38,38,0)}}
+.risk-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:20px;font-size:10px;font-weight:600;}
+.risk-high{background:var(--red-l);color:var(--red);}
+.risk-med{background:var(--gold-l);color:var(--gold);}
+.risk-ok{background:var(--leaf-l);color:var(--leaf);}
+.delivery-queue-item{background:#fff;border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px;transition:all .2s;}
+.delivery-queue-item:hover{box-shadow:var(--shadow);}
+.suggest-badge{background:linear-gradient(135deg,var(--rose),var(--rose-d));color:#fff;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:600;letter-spacing:1px;}
+.notif-msg-preview{background:var(--petal);border-radius:var(--r);padding:12px;font-size:12px;color:var(--ink2);line-height:1.6;border-left:3px solid var(--rose);margin-top:8px;}
+.client-suggestion{padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .15s;}
+.client-suggestion:hover{background:var(--petal);}
+.client-suggestion:last-child{border-bottom:none;}
 
 /* RESPONSIVE */
 @media(max-width:768px){
@@ -210,7 +231,8 @@ const CLAUDE_API = 'https://api.anthropic.com/v1/messages';
 // ── STATE ────────────────────────────────────────────────────
 let S = {
   user: null, token: null, page: 'dashboard',
-  clients:[], products:[], orders:[], users:[],
+  clients:[], products:[], orders:[], users:[], _userSearch:'',
+  _userSearch:'',
   loading:false, toast:null, sidebarOpen:false,
   alerts:[], chatHistory:[],
   _modal:'', _pdidoFilter:'Todos', _clientSel:null,
@@ -218,6 +240,10 @@ let S = {
 };
 
 // PDV state
+// Delivery fees config (saved in localStorage)
+let DELIVERY_FEES = JSON.parse(localStorage.getItem('fv_delivery_fees')||'{"Manaus":{"Zona Centro":15,"Zona Norte":20,"Zona Sul":18,"Zona Leste":20,"Zona Oeste":18,"Outros":25}}');
+function saveDeliveryFees(){localStorage.setItem('fv_delivery_fees',JSON.stringify(DELIVERY_FEES));}
+
 let PDV = {
   cart:[], discount:0, payment:'Pix',
   clientId:'', clientName:'', clientPhone:'', clientEmail:'',
@@ -225,7 +251,9 @@ let PDV = {
   deliveryDate:'', deliveryPeriod:'Manhã', deliveryTime:'',
   street:'', neighborhood:'', number:'', city:'', cep:'',
   reference:'', isCondominium:false, block:'', apt:'',
-  type:'Delivery'
+  type:'Delivery', deliveryFee:0, zone:'', clientSearch:'',
+  pickupUnit:'', saleUnit:'', notifyClient:true, identifyClient:true,
+  _showQuickReg:false
 };
 
 // ── UTILS ────────────────────────────────────────────────────
@@ -264,8 +292,8 @@ async function doLogin(email,pass){
   }catch(e){S.loading=false;render();}
 }
 async function loadData(){
-  try{const[c,p,o]=await Promise.all([GET('/clients'),GET('/products'),GET('/orders')]);
-  S.clients=c||[];S.products=p||[];S.orders=o||[];}catch(e){console.log(e);}
+  try{const[c,p,o,u]=await Promise.all([GET('/clients'),GET('/products'),GET('/orders'),GET('/users').catch(()=>[])]);
+  S.clients=c||[];S.products=p||[];S.orders=o||[];S.users=u||[];}catch(e){console.log(e);}
 }
 function toast(msg,err=false){S.toast={msg,err};render();setTimeout(()=>{S.toast=null;render();},3500);}
 function setPage(p){S.page=p;S.sidebarOpen=false;render();}
@@ -462,9 +490,10 @@ function renderPDV(){
     return ms&&mc&&p.active!==false;
   });
   const sub=PDV.cart.reduce((s,i)=>s+i.price*i.qty,0);
-  const total=sub-(PDV.discount||0);
+  const deliveryFee=PDV.type==='Delivery'?(PDV.deliveryFee||0):0;
+  const total=sub-(PDV.discount||0)+deliveryFee;
 
-  return`<div class="pdv-grid">
+  return `<div class="pdv-grid">
 <div>
   <div class="card" style="margin-bottom:12px;">
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -477,7 +506,7 @@ function renderPDV(){
   <div class="prod-grid">
     ${filtered.map(p=>`
     <div class="prod-card ${PDV.cart.find(i=>i.id===p._id)?'sel':''}" data-pid="${p._id}">
-      ${p.images?.[0]?`<img src="${p.images[0]}" class="prod-img" onerror="this.style.display='none'"/>`:`<div style="font-size:28px;margin-bottom:5px">${emoji(p.category)}</div>`}
+      ${p.images&&p.images[0]?`<img src="${p.images[0]}" style="width:64px;height:64px;border-radius:8px;object-fit:cover;margin:0 auto 5px;display:block">`:`<div style="font-size:28px;margin-bottom:5px">${emoji(p.category)}</div>`}
       <div style="font-size:11px;font-weight:500">${p.name}</div>
       <div style="font-size:12px;color:var(--rose);font-weight:600">${$c(p.salePrice)}</div>
       <div style="font-size:10px;color:${(p.stock||0)<=(p.minStock||5)?'var(--red)':'var(--muted)'}">Est: ${p.stock||0}</div>
@@ -486,21 +515,76 @@ function renderPDV(){
 </div>
 
 <div>
-<div class="card" style="height:100%;">
+<div class="card">
   <div class="card-title">🛒 Pedido</div>
-  
-  <div class="fg">
-    <label class="fl">Cliente</label>
-    <select class="fi" id="pdv-client">
-      <option value="">Selecionar cliente cadastrado...</option>
-      ${S.clients.map(c=>`<option value="${c._id}" ${PDV.clientId===c._id?'selected':''}>${c.name} — ${c.phone}</option>`).join('')}
+
+  ${!['Loja Novo Aleixo','Loja Allegro Mall','CDLE'].includes(S.user.unit)?`
+  <div class="fg"><label class="fl">Unidade de Venda *</label>
+    <select class="fi" id="pdv-sale-unit">
+      <option value="Loja Novo Aleixo" ${PDV.saleUnit==='Loja Novo Aleixo'?'selected':''}>🌺 Loja Novo Aleixo</option>
+      <option value="Loja Allegro Mall" ${PDV.saleUnit==='Loja Allegro Mall'?'selected':''}>🌺 Loja Allegro Mall</option>
+      <option value="CDLE" ${PDV.saleUnit==='CDLE'?'selected':''}>📦 CDLE</option>
     </select>
-    <div class="fr2" style="margin-top:6px;">
-      <input class="fi" id="pdv-cname" placeholder="Nome rápido" value="${PDV.clientName}"/>
-      <input class="fi" id="pdv-cphone" placeholder="WhatsApp" value="${PDV.clientPhone}"/>
+  </div>`:''}
+
+  <!-- BUSCA CLIENTE -->
+  <div class="fg">
+    <label class="fl">Buscar cliente (telefone ou nome) *</label>
+    <div style="position:relative;">
+      <input class="fi" id="pdv-phone-search" placeholder="Digite o telefone ou nome..." value="${PDV.clientSearch}" autocomplete="off"/>
+      ${PDV.clientSearch&&PDV.clientSearch.length>=2?`
+      <div style="position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);z-index:50;max-height:200px;overflow-y:auto;">
+        ${S.clients.filter(c=>{const q=PDV.clientSearch.toLowerCase();return c.phone?.replace(/\D/g,'').includes(PDV.clientSearch.replace(/\D/g,''))||c.name?.toLowerCase().includes(q);}).slice(0,6).map(c=>`
+        <div data-cli-pick="${c._id}" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px;">
+          <div style="font-weight:600">${c.name}</div>
+          <div style="color:var(--muted)">${c.phone||''} ${c.address?.neighborhood?'· '+c.address.neighborhood:''}</div>
+        </div>`).join('')}
+        <div id="pdv-new-cli-btn" style="padding:10px 12px;cursor:pointer;color:var(--rose);font-size:12px;font-weight:600;">➕ Cadastrar novo cliente</div>
+      </div>`:''}
     </div>
+    ${PDV.clientId?`
+    <div style="background:var(--leaf-l);border-radius:8px;padding:10px 12px;margin-top:6px;display:flex;align-items:center;justify-content:space-between;">
+      <div>
+        <div style="font-weight:600;font-size:13px">${S.clients.find(c=>c._id===PDV.clientId)?.name||PDV.clientName}</div>
+        <div style="font-size:11px;color:var(--muted)">${S.clients.find(c=>c._id===PDV.clientId)?.phone||PDV.clientPhone}</div>
+      </div>
+      <button class="btn btn-ghost btn-xs" id="pdv-clear-cli">✕</button>
+    </div>`:(PDV.clientName?`
+    <div style="background:var(--cream);border-radius:8px;padding:8px 12px;margin-top:6px;font-size:12px;">
+      <span style="font-weight:500">${PDV.clientName}</span> <span style="color:var(--muted)">${PDV.clientPhone||''}</span>
+      <button class="btn btn-ghost btn-xs" id="pdv-clear-cli" style="margin-left:8px">✕</button>
+    </div>`:'')}
   </div>
 
+  <!-- CADASTRO RÁPIDO -->
+  ${PDV._showQuickReg?`
+  <div style="background:var(--petal);border-radius:var(--r);padding:14px;border:1px solid var(--rose-l);margin-bottom:10px;">
+    <div style="font-weight:600;font-size:13px;margin-bottom:10px;color:var(--rose)">➕ Cadastro Rápido de Cliente</div>
+    <div class="fr2">
+      <div class="fg"><label class="fl">Nome completo *</label><input class="fi" id="qr-name" placeholder="Nome completo"/></div>
+      <div class="fg"><label class="fl">WhatsApp *</label><input class="fi" id="qr-phone" placeholder="(92) 9xxxx-xxxx"/></div>
+      <div class="fg"><label class="fl">E-mail</label><input class="fi" id="qr-email" type="email" placeholder="email@..."/></div>
+      <div class="fg"><label class="fl">Aniversário</label><input class="fi" id="qr-bday" type="date"/></div>
+      <div class="fg"><label class="fl">CPF</label><input class="fi" id="qr-cpf" placeholder="000.000.000-00"/></div>
+      <div class="fg"><label class="fl">Segmento</label>
+        <select class="fi" id="qr-segment"><option value="Novo">Novo</option><option value="Recorrente">Recorrente</option><option value="VIP">VIP</option></select>
+      </div>
+    </div>
+    <div class="fr2">
+      <div class="fg" style="grid-column:span 2"><label class="fl">Rua</label><input class="fi" id="qr-street" placeholder="Rua das Flores"/></div>
+      <div class="fg"><label class="fl">Número</label><input class="fi" id="qr-number" placeholder="123"/></div>
+      <div class="fg"><label class="fl">Bairro</label><input class="fi" id="qr-neigh" placeholder="Centro"/></div>
+      <div class="fg"><label class="fl">Cidade</label><input class="fi" id="qr-city" value="Manaus"/></div>
+      <div class="fg"><label class="fl">CEP</label><input class="fi" id="qr-cep" placeholder="00000-000"/></div>
+    </div>
+    <div class="fg"><label class="fl">Observações</label><textarea class="fi" id="qr-notes" rows="2"></textarea></div>
+    <div style="display:flex;gap:6px;">
+      <button class="btn btn-primary btn-sm" id="btn-qr-save">✅ Salvar e usar</button>
+      <button class="btn btn-ghost btn-sm" id="btn-qr-cancel">Cancelar</button>
+    </div>
+  </div>`:''}
+
+  <!-- CARRINHO -->
   ${PDV.cart.length>0?`
   <div style="max-height:180px;overflow-y:auto;margin-bottom:8px;">
     ${PDV.cart.map(i=>`
@@ -516,10 +600,23 @@ function renderPDV(){
   </div>`:`<div style="text-align:center;color:var(--muted);padding:10px;font-size:12px">Clique nos produtos para adicionar</div>`}
 
   <hr/>
+  <!-- UNIDADE DE VENDA (só para Admin) -->
+  ${S.user.unit==='Todas'||S.user.role==='Administrador'?`
+  <div class="fg"><label class="fl">🏪 Unidade de Venda *</label>
+    <select class="fi" id="pdv-sale-unit">
+      <option value="">Selecionar unidade...</option>
+      <option value="Loja Novo Aleixo" ${PDV.saleUnit==='Loja Novo Aleixo'?'selected':''}>Loja Novo Aleixo</option>
+      <option value="Loja Allegro Mall" ${PDV.saleUnit==='Loja Allegro Mall'?'selected':''}>Loja Allegro Mall</option>
+      <option value="CDLE" ${PDV.saleUnit==='CDLE'?'selected':''}>CDLE</option>
+    </select>
+  </div>`:''}
+  <hr/>
+  <!-- DESTINATÁRIO E CARTÃO -->
   <div class="fg"><label class="fl">Destinatário</label><input class="fi" id="pdv-recipient" placeholder="Nome de quem vai receber" value="${PDV.recipient}"/></div>
-  <div class="fg"><label class="fl">Mensagem do cartão</label><textarea class="fi" id="pdv-cardmsg" placeholder="Escreva a mensagem do cartão..." rows="2">${PDV.cardMessage}</textarea></div>
+  <div class="fg"><label class="fl">Mensagem do cartão</label><textarea class="fi" id="pdv-cardmsg" rows="2" placeholder="Mensagem para o cartão...">${PDV.cardMessage}</textarea></div>
 
   <hr/>
+  <!-- DATA E TURNO -->
   <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--ink)">📅 Data e Entrega</div>
   <div class="fr2">
     <div class="fg"><label class="fl">Data de entrega</label><input class="fi" type="date" id="pdv-date" value="${PDV.deliveryDate}"/></div>
@@ -533,15 +630,44 @@ function renderPDV(){
     </div>
   </div>
   ${PDV.deliveryPeriod==='Horário específico'?`<div class="fg"><label class="fl">Horário</label><input class="fi" type="time" id="pdv-time" value="${PDV.deliveryTime}"/></div>`:''}
-  
-  <div class="fg"><label class="fl">Tipo</label>
-    <div style="display:flex;gap:6px;">
+
+  <!-- TIPO DE ENTREGA -->
+  <div class="fg"><label class="fl">Tipo de Entrega</label>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
       <button class="btn btn-sm ${PDV.type==='Delivery'?'btn-primary':'btn-ghost'}" data-type="Delivery">🚚 Delivery</button>
-      <button class="btn btn-sm ${PDV.type==='Balcão'?'btn-primary':'btn-ghost'}" data-type="Balcão">🏪 Balcão</button>
+      <button class="btn btn-sm ${PDV.type==='Retirada'?'btn-primary':'btn-ghost'}" data-type="Retirada">🏪 Retirada na Loja</button>
+      <button class="btn btn-sm ${PDV.type==='Balcão'?'btn-primary':'btn-ghost'}" data-type="Balcão">🛍️ Balcão</button>
     </div>
   </div>
 
+  ${PDV.type==='Retirada'?`
+  <div class="fg"><label class="fl">Unidade de Retirada *</label>
+    <select class="fi" id="pdv-pickup-unit">
+      <option value="">Selecionar loja...</option>
+      <option value="Loja Novo Aleixo" ${PDV.pickupUnit==='Loja Novo Aleixo'?'selected':''}>🌺 Loja Novo Aleixo</option>
+      <option value="Loja Allegro Mall" ${PDV.pickupUnit==='Loja Allegro Mall'?'selected':''}>🌺 Loja Allegro Mall</option>
+      <option value="CDLE" ${PDV.pickupUnit==='CDLE'?'selected':''}>📦 CDLE</option>
+    </select>
+  </div>`:''}
+
   ${PDV.type==='Delivery'?`
+  <hr/>
+  <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--ink)">💰 Taxa de Entrega</div>
+  <div class="fr2">
+    <div class="fg"><label class="fl">Cidade</label>
+      <select class="fi" id="pdv-city-sel">
+        <option value="">Selecionar cidade...</option>
+        ${Object.keys(DELIVERY_FEES).map(c=>`<option value="${c}" ${PDV.city===c?'selected':''}>${c}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label class="fl">Zona / Bairro</label>
+      <select class="fi" id="pdv-zone-sel" ${!PDV.city?'disabled':''}>
+        <option value="">Selecionar zona...</option>
+        ${PDV.city&&DELIVERY_FEES[PDV.city]?Object.entries(DELIVERY_FEES[PDV.city]).map(([z,v])=>`<option value="${z}" ${PDV.zone===z?'selected':''}>${z} — ${$c(v)}</option>`).join(''):''}
+      </select>
+    </div>
+  </div>
+  ${PDV.deliveryFee>0?`<div style="background:var(--gold-l);border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:8px;">🚚 Taxa: <strong>${$c(PDV.deliveryFee)}</strong></div>`:''}
   <hr/>
   <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--ink)">📍 Endereço de Entrega</div>
   <div class="fg"><label class="fl">Rua / Avenida</label><input class="fi" id="pdv-street" placeholder="Rua das Flores" value="${PDV.street}"/></div>
@@ -554,10 +680,7 @@ function renderPDV(){
     <div class="fg"><label class="fl">CEP</label><input class="fi" id="pdv-cep" placeholder="00000-000" value="${PDV.cep}"/></div>
   </div>
   <div class="fg"><label class="fl">Ponto de referência</label><input class="fi" id="pdv-ref" placeholder="Próximo ao mercado..." value="${PDV.reference}"/></div>
-  <label class="cb" style="margin-bottom:10px;">
-    <input type="checkbox" id="pdv-condo" ${PDV.isCondominium?'checked':''}/>
-    <span style="font-size:12px">É condomínio?</span>
-  </label>
+  <label class="cb" style="margin-bottom:10px;"><input type="checkbox" id="pdv-condo" ${PDV.isCondominium?'checked':''}/><span style="font-size:12px">É condomínio?</span></label>
   ${PDV.isCondominium?`
   <div class="fr2">
     <div class="fg"><label class="fl">Bloco *</label><input class="fi" id="pdv-block" placeholder="Bloco A" value="${PDV.block}" required/></div>
@@ -566,18 +689,30 @@ function renderPDV(){
   `:''}
 
   <hr/>
+  <!-- OPÇÕES -->
+  <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--ink)">⚙️ Opções</div>
+  <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
+    <label class="cb"><input type="checkbox" id="pdv-notify" ${PDV.notifyClient?'checked':''}/><div><div style="font-size:12px;font-weight:500">📱 Notificar cliente sobre entrega</div><div style="font-size:10px;color:var(--muted)">Enviar WhatsApp quando entregue</div></div></label>
+    <label class="cb"><input type="checkbox" id="pdv-identify" ${PDV.identifyClient?'checked':''}/><div><div style="font-size:12px;font-weight:500">👤 Identificar remetente na entrega</div><div style="font-size:10px;color:var(--muted)">Revelar quem enviou ao destinatário</div></div></label>
+  </div>
+
   <div class="fg"><label class="fl">Observações</label><textarea class="fi" id="pdv-notes" rows="2" placeholder="Observações...">${PDV.notes}</textarea></div>
+
+  <hr/>
+  <!-- PAGAMENTO -->
   <div class="fr2">
     <div class="fg"><label class="fl">Desconto (R$)</label><input class="fi" type="number" id="pdv-disc" placeholder="0" value="${PDV.discount||''}"/></div>
     <div class="fg"><label class="fl">Forma de Pgto</label>
       <select class="fi" id="pdv-pay">
-        ${['Pix','Dinheiro','Crédito','Débito','Link','Cortesia'].map(m=>`<option ${PDV.payment===m?'selected':''}>${m}</option>`).join('')}
+        ${['Pix','Dinheiro','Crédito','Débito','Link','Cortesia','Boleto','Faturado'].map(m=>`<option ${PDV.payment===m?'selected':''}>${m}</option>`).join('')}
       </select>
     </div>
   </div>
+
   <hr/>
   <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:4px"><span>Subtotal</span><span>${$c(sub)}</span></div>
   ${PDV.discount>0?`<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--leaf);margin-bottom:4px"><span>Desconto</span><span>−${$c(PDV.discount)}</span></div>`:''}
+  ${deliveryFee>0?`<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--gold);margin-bottom:4px"><span>🚚 Taxa entrega</span><span>+${$c(deliveryFee)}</span></div>`:''}
   <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:700;color:var(--rose);margin-bottom:12px"><span>Total</span><span>${$c(total)}</span></div>
   <button class="btn btn-primary" id="btn-fin" style="width:100%;justify-content:center;padding:11px;font-size:13px">✅ Finalizar — ${$c(total)}</button>
 </div>
@@ -676,13 +811,13 @@ function renderProdutos(){
 <div class="card">
   <div class="card-title">Catálogo</div>
   ${S.products.length===0?`<div class="empty"><div class="empty-icon">🌹</div><p>Sem produtos</p><button class="btn btn-primary" id="btn-new-prod2" style="margin-top:10px">Cadastrar primeiro</button></div>`:`
-  <div class="tw"><table><thead><tr><th>Produto</th><th>Categoria</th><th>Custo</th><th>Venda</th><th>Margem</th><th>Estoque</th><th>Site</th><th>Status</th><th></th></tr></thead>
+  <div class="tw"><table><thead><tr><th>Produto</th><th>Categoria</th><th>Custo</th><th>Venda</th><th>Margem</th><th>Estoque</th><th>Site</th><th>Status</th><th>NCM</th><th></th></tr></thead>
   <tbody>${S.products.map(p=>{
     const mg=p.salePrice>0?((p.salePrice-(p.costPrice||0))/p.salePrice*100).toFixed(0):0;
     const low=(p.stock||0)<=(p.minStock||5);
     return`<tr>
       <td><div style="display:flex;align-items:center;gap:8px;">
-        ${p.images?.[0]?`<img src="${p.images[0]}" style="width:32px;height:32px;border-radius:6px;object-fit:cover">`:`<span style="font-size:18px">${emoji(p.category)}</span>`}
+        ${p.images?.[0]?`<img src="${p.images[0]}" style="width:40px;height:40px;border-radius:6px;object-fit:cover;cursor:pointer" title="${p.name}" onclick="showFullImg('${p.images[0]}')">`:`<span style="font-size:20px">${emoji(p.category)}</span>`}
         <span style="font-weight:500">${p.name}</span>
       </div></td>
       <td><span class="tag t-gray">${p.category||'—'}</span></td>
@@ -692,6 +827,7 @@ function renderProdutos(){
       <td style="font-weight:500;color:${low?'var(--red)':'var(--ink)'}">${p.stock||0}</td>
       <td><span class="tag ${p.activeOnSite?'t-green':'t-gray'}">${p.activeOnSite?'✅ Ativo':'—'}</span></td>
       <td><span class="tag ${low?'t-red':'t-green'}">${low?'⚠️':'✅'}</span></td>
+      <td style="font-size:10px;color:var(--muted);">${p.taxation?.ncm||'—'}</td>
       <td><button class="btn btn-ghost btn-xs" data-edit-prod="${p._id}">✏️</button></td>
     </tr>`;
   }).join('')}</tbody></table></div>`}
@@ -770,7 +906,7 @@ function renderProducao(){
     <div style="display:flex;gap:12px;align-items:flex-start;">
       ${(o.items||[]).map(i=>{
         const prod=S.products.find(p=>p._id===i.product||p.name===i.name);
-        return prod?.images?.[0]?`<img src="${prod.images[0]}" style="width:56px;height:56px;border-radius:8px;object-fit:cover;flex-shrink:0">`:'';
+        return prod?.images?.[0]?`<img src="${prod.images[0]}" style="width:72px;height:72px;border-radius:8px;object-fit:contain;flex-shrink:0;background:var(--cream);border:1px solid var(--border)" onclick="showFullImg('${prod.images[0]}')">`:'';
       }).join('')}
       <div style="flex:1">
         <div style="font-size:13px;font-weight:500;margin-bottom:4px">${(o.items||[]).map(i=>`${i.qty}x ${i.name}`).join(', ')}</div>
@@ -789,91 +925,174 @@ function renderProducao(){
 
 // ── EXPEDIÇÃO ────────────────────────────────────────────────
 function renderExpedicao(){
-  const prontos=S.orders.filter(o=>o.status==='Pronto');
-  const emRota=S.orders.filter(o=>o.status==='Saiu p/ entrega');
+  const allDelivery = S.orders.filter(o=>['Pronto','Saiu p/ entrega','Aguardando','Em preparo'].includes(o.status) && o.type==='Delivery');
+  const prontos = S.orders.filter(o=>o.status==='Pronto');
+  const emRota = S.orders.filter(o=>o.status==='Saiu p/ entrega');
+  const sorted = sortOrdersByPriority(allDelivery);
+  
+  // Check for critical orders and play alert
+  const hasCritical = allDelivery.some(o=>['late','critical'].includes(getDeliveryRisk(o)));
+  if (hasCritical && !window._alertPlayed) { window._alertPlayed = true; playAlert(); setTimeout(()=>{window._alertPlayed=false;}, 60000); }
+
   return`
 <div class="g4" style="margin-bottom:16px;">
-  <div class="mc leaf"><div class="mc-label">Prontos p/ Saída</div><div class="mc-val">${prontos.length}</div></div>
+  <div class="mc leaf"><div class="mc-label">Prontos</div><div class="mc-val">${prontos.length}</div></div>
   <div class="mc gold"><div class="mc-label">Em Rota</div><div class="mc-val">${emRota.length}</div></div>
   <div class="mc rose"><div class="mc-label">Entregues Hoje</div><div class="mc-val">${S.orders.filter(o=>o.status==='Entregue').length}</div></div>
-  <div class="mc purple"><div class="mc-label">Entregadores Ativos</div><div class="mc-val">2</div></div>
+  <div class="mc purple"><div class="mc-label">Com Risco</div><div class="mc-val" style="color:var(--red)">${allDelivery.filter(o=>['late','critical'].includes(getDeliveryRisk(o))).length}</div></div>
 </div>
+
+${hasCritical ? `<div class="alert al-err" style="animation:pulse 1s ease infinite">🚨 <strong>ATENÇÃO!</strong> Há pedidos com risco de atraso. Verifique a fila abaixo!</div>` : ''}
+
 <div class="g2">
+<div>
   <div class="card">
-    <div class="card-title">Prontos para Expedição</div>
-    ${prontos.length===0?`<div class="empty"><div class="empty-icon">📤</div><p>Sem pedidos prontos</p></div>`:
-    prontos.map(o=>`
-    <div style="background:var(--leaf-l);border-radius:var(--r);padding:12px;margin-bottom:8px;border:1px solid rgba(45,106,79,.2);">
-      <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
-        <span style="font-weight:700;color:var(--rose)">${o.orderNumber}</span>
-        <span style="font-size:11px;color:var(--muted)">${o.scheduledPeriod||''} ${o.scheduledTime||''}</span>
+    <div class="card-title">📋 Fila de Entregas — Prioridade Inteligente
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" id="btn-rel-orders">🔄 Atualizar</button>
       </div>
-      <div style="font-size:12px;font-weight:500">${o.client?.name||o.clientName||'—'}</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${o.deliveryAddress||'—'}</div>
-      <div style="display:flex;gap:6px;">
-        <select class="fi" style="flex:1;padding:5px 8px;font-size:11px;">
-          <option>Escolher entregador...</option>
-          <option>João — Entregador</option>
-          <option>Pedro — Entregador</option>
-        </select>
-        <button class="btn btn-primary btn-sm" data-exp="${o._id}">Expedir 🚚</button>
-      </div>
-    </div>`).join('')}
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+      <span style="font-size:11px;padding:3px 8px;background:var(--red-l);color:var(--red);border-radius:20px">🚨 Atrasado</span>
+      <span style="font-size:11px;padding:3px 8px;background:#FFF0E6;color:#FF6B00;border-radius:20px">⚠️ Crítico &lt;1h</span>
+      <span style="font-size:11px;padding:3px 8px;background:var(--gold-l);color:var(--gold);border-radius:20px">⏰ Atenção &lt;2h</span>
+      <span style="font-size:11px;padding:3px 8px;background:var(--leaf-l);color:var(--leaf);border-radius:20px">✅ OK</span>
+    </div>
+    ${sorted.length===0 ? `<div class="empty"><div class="empty-icon">🚚</div><p>Sem entregas pendentes</p></div>` :
+    sorted.map((o,idx) => {
+      const risk = getDeliveryRisk(o);
+      const riskColor = getRiskColor(risk);
+      const riskLabel = getRiskLabel(risk);
+      const borderColor = {late:'var(--red)',critical:'#FF6B00',warning:'var(--gold)',ok:'var(--leaf)',none:'var(--border)'}[risk];
+      return `
+      <div style="border:1px solid ${borderColor};border-left:4px solid ${borderColor};border-radius:var(--r);padding:12px;margin-bottom:10px;background:${risk==='late'?'#FFF5F5':risk==='critical'?'#FFF8F0':'#fff'}">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="background:var(--rose);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${idx+1}</span>
+            <span style="font-weight:700;color:var(--rose)">${o.orderNumber}</span>
+            <span class="tag ${sc(o.status)}">${o.status}</span>
+          </div>
+          <span style="font-size:11px;font-weight:600;color:${riskColor}">${riskLabel}</span>
+        </div>
+        <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:8px;">
+          <div style="flex:1;">
+            <div style="font-size:13px;font-weight:500">${o.client?.name||o.clientName||'—'}</div>
+            <div style="font-size:11px;color:var(--muted)">📍 ${o.deliveryAddress||'—'}</div>
+            ${o.isCondominium ? `<div style="font-size:11px;color:var(--blue)">🏢 Bloco ${o.block} Ap ${o.apt}</div>` : ''}
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">🕐 ${o.scheduledPeriod||'—'} ${o.scheduledTime||''} ${o.scheduledDate?'· '+new Date(o.scheduledDate).toLocaleDateString('pt-BR'):''}</div>
+          </div>
+        </div>
+        ${risk==='late'||risk==='critical' ? `<div style="background:${risk==='late'?'var(--red-l)':'#FFF0E6'};border-radius:6px;padding:6px 10px;font-size:11px;color:${riskColor};font-weight:600;margin-bottom:8px;">
+          ${risk==='late'?'🚨 PEDIDO ATRASADO — Entrar em contato imediatamente!':'⚠️ Menos de 1h para o horário de entrega — Prioridade máxima!'}
+        </div>` : ''}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${o.status==='Pronto' ? `
+          <select class="fi" id="driver-${o._id}" style="flex:1;padding:5px 8px;font-size:11px;">
+            <option value="">Escolher entregador...</option>
+            <option>Entregador 1</option>
+            <option>Entregador 2</option>
+          </select>
+          <button class="btn btn-primary btn-sm" data-exp="${o._id}">🚚 Expedir</button>` : ''}
+          ${o.status==='Saiu p/ entrega' ? `<button class="btn btn-green btn-sm" data-adv="${o._id}">✅ Marcar Entregue</button>` : ''}
+          ${o.status==='Aguardando'||o.status==='Em preparo' ? `<span style="font-size:11px;color:var(--muted)">Aguardando produção...</span>` : ''}
+          <a href="https://maps.google.com/?q=${encodeURIComponent(o.deliveryAddress||'')}" target="_blank" class="btn btn-ghost btn-sm">🗺️ Rota</a>
+        </div>
+      </div>`;
+    }).join('')}
   </div>
+</div>
+<div>
   <div class="card">
-    <div class="card-title">🗺️ Rota Inteligente</div>
-    <div style="background:var(--cream);border-radius:var(--r);height:200px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;border:1px dashed var(--border);margin-bottom:12px;">
-      <div style="font-size:32px">🗺️</div>
-      <div style="font-size:12px;font-weight:500">Google Maps</div>
-      <div style="font-size:11px;color:var(--muted);text-align:center;max-width:200px">Otimização de rotas por horário, bairro e prioridade</div>
+    <div class="card-title">🗺️ Otimização de Rota</div>
+    <div style="background:var(--cream);border-radius:var(--r);padding:16px;text-align:center;border:1px dashed var(--border);margin-bottom:12px;">
+      <div style="font-size:36px;margin-bottom:8px">🗺️</div>
+      <div style="font-size:12px;font-weight:500;margin-bottom:4px">Rota Inteligente</div>
+      <div style="font-size:11px;color:var(--muted)">Organize as entregas por bairro para economizar tempo e combustível</div>
     </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <button class="btn btn-outline btn-sm">📍 Por Bairro</button>
-      <button class="btn btn-outline btn-sm">🕐 Por Horário</button>
-      <button class="btn btn-outline btn-sm">🔴 Por Prioridade</button>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="btn btn-outline btn-sm" id="btn-sort-time">🕐 Por Horário</button>
+      <button class="btn btn-outline btn-sm" id="btn-sort-region">📍 Por Região</button>
+      <button class="btn btn-primary btn-sm" id="btn-sort-priority">🔴 Por Prioridade</button>
     </div>
+    <hr/>
+    <div class="card-title" style="font-size:13px">📊 Resumo do Dia</div>
+    ${['Manhã','Tarde','Noite'].map(t => {
+      const t_orders = allDelivery.filter(o=>o.scheduledPeriod===t);
+      return `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">
+        <span>${t==='Manhã'?'☀️':'🌤️'} ${t}</span>
+        <span style="font-weight:600">${t_orders.length} entregas</span>
+      </div>`;
+    }).join('')}
   </div>
+
+  <div class="card" style="margin-top:16px;">
+    <div class="card-title">📲 Notificação ao Cliente</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Mensagem enviada automaticamente quando pedido é marcado como Entregue</div>
+    <textarea class="fi" id="delivery-msg-template" rows="4" placeholder="Mensagem padrão...">${localStorage.getItem('fv_delivery_msg')||'Olá, {nome}! 🌸 Seu pedido {pedido} foi entregue com sucesso. Esperamos que tenha amado! 💖 Floricultura Laços Eternos'}</textarea>
+    <div style="font-size:10px;color:var(--muted);margin:6px 0 10px;">Variáveis: {nome} {pedido} {produto} {data} {floricultura}</div>
+    <button class="btn btn-green btn-sm" id="btn-save-msg">💾 Salvar Mensagem</button>
+  </div>
+</div>
 </div>`;
 }
 
+
 // ── ENTREGADOR ───────────────────────────────────────────────
 function renderEntregador(){
-  const minhas=S.orders.filter(o=>o.status==='Saiu p/ entrega');
+  const minhas = sortOrdersByPriority(S.orders.filter(o=>o.status==='Saiu p/ entrega'));
+  const hasCritical = minhas.some(o=>['late','critical'].includes(getDeliveryRisk(o)));
   return`
-<div class="alert al-info">🚚 Bem-vindo, ${S.user.name?.split(' ')[0]}! Você tem <strong>${minhas.length} entregas</strong> hoje.</div>
-${minhas.length===0?`<div class="empty card"><div class="empty-icon">✅</div><p>Sem entregas pendentes</p></div>`:
-minhas.map(o=>`
-<div class="delivery-card ${o.isPriority?'priority':''}">
-  ${o.isPriority?`<div class="tag t-red" style="margin-bottom:8px">🔴 PRIORIDADE</div>`:''}
-  <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
-    <span style="font-weight:700;color:var(--rose);font-size:15px">${o.orderNumber}</span>
-    <span class="tag t-gold">${o.scheduledPeriod||'—'} ${o.scheduledTime||''}</span>
+${hasCritical ? `<div class="alert al-err">🚨 <strong>ATENÇÃO!</strong> Há entregas com risco de atraso!</div>` : `<div class="alert al-ok">🚚 Olá, ${S.user?.name?.split(' ')[0]}! Você tem <strong>${minhas.length} entregas</strong> hoje.</div>`}
+${minhas.length===0 ? `<div class="empty card"><div class="empty-icon">✅</div><p>Sem entregas pendentes</p></div>` :
+minhas.map((o,idx) => {
+  const risk = getDeliveryRisk(o);
+  const riskColor = getRiskColor(risk);
+  const borderColor = {late:'var(--red)',critical:'#FF6B00',warning:'var(--gold)',ok:'var(--leaf)',none:'var(--border)'}[risk];
+  return `
+<div class="delivery-card" style="border-left:4px solid ${borderColor};background:${risk==='late'?'#FFF5F5':risk==='critical'?'#FFF8F0':'#fff'}">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="background:var(--rose);color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">${idx+1}</span>
+      <span style="font-weight:700;color:var(--rose);font-size:15px">${o.orderNumber}</span>
+    </div>
+    <span style="font-size:12px;font-weight:700;color:${riskColor}">${getRiskLabel(risk)}</span>
   </div>
+  ${risk==='late'||risk==='critical' ? `<div style="background:${risk==='late'?'var(--red-l)':'#FFF0E6'};border-radius:6px;padding:8px 12px;font-size:12px;color:${riskColor};font-weight:600;margin-bottom:10px;">
+    ${risk==='late'?'🚨 PEDIDO ATRASADO':'⚠️ Menos de 1h — Prioridade máxima!'}
+  </div>` : ''}
   ${(o.items||[]).map(i=>{
-    const p=S.products.find(pr=>pr.name===i.name);
-    return`<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-      ${p?.images?.[0]?`<img src="${p.images[0]}" style="width:48px;height:48px;border-radius:8px;object-fit:cover">`:''}
-      <div><div style="font-size:13px;font-weight:500">${i.qty}x ${i.name}</div></div>
+    const p=S.products.find(pr=>pr.name===i.name||pr._id===i.product);
+    return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:8px;background:var(--cream);border-radius:8px;">
+      ${p?.images?.[0]?`<img src="${p.images[0]}" style="width:52px;height:52px;border-radius:8px;object-fit:contain;background:#fff;flex-shrink:0">`:`<span style="font-size:28px;flex-shrink:0">🌸</span>`}
+      <div><div style="font-size:13px;font-weight:600">${i.qty}x ${i.name}</div></div>
     </div>`;
   }).join('')}
   <hr/>
-  <div style="margin-bottom:8px;">
-    <div style="font-size:11px;color:var(--muted)">Destinatário</div>
-    <div style="font-size:14px;font-weight:600">${o.recipient||o.client?.name||'—'}</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+    <div>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Destinatário</div>
+      <div style="font-size:14px;font-weight:600">${o.recipient||o.client?.name||o.clientName||'—'}</div>
+    </div>
+    <div>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Horário</div>
+      <div style="font-size:14px;font-weight:600">${o.scheduledPeriod||'—'} ${o.scheduledTime||''}</div>
+    </div>
   </div>
-  <div style="margin-bottom:10px;">
-    <div style="font-size:11px;color:var(--muted)">Endereço</div>
+  <div style="background:var(--cream);border-radius:8px;padding:10px;margin-bottom:10px;">
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Endereço</div>
     <div style="font-size:13px;font-weight:500">${o.deliveryAddress||'—'}</div>
-    ${o.isCondominium?`<div style="font-size:11px;color:var(--blue)">🏢 Cond. — Bloco ${o.block}, Ap ${o.apt}</div>`:''}
-    ${o.reference?`<div style="font-size:11px;color:var(--muted)">Ref: ${o.reference}</div>`:''}
+    ${o.isCondominium?`<div style="font-size:11px;color:var(--blue);margin-top:2px">🏢 Bloco ${o.block}, Ap ${o.apt}</div>`:''}
+    ${o.reference?`<div style="font-size:11px;color:var(--muted);margin-top:2px">Ref: ${o.reference}</div>`:''}
   </div>
-  ${o.cardMessage?`<div style="background:var(--petal);padding:8px;border-radius:var(--r);font-size:11px;margin-bottom:10px;">"${o.cardMessage}"</div>`:''}
-  <div style="display:flex;gap:6px;flex-wrap:wrap;">
-    <a href="https://maps.google.com/?q=${encodeURIComponent(o.deliveryAddress||'')}" target="_blank" class="btn btn-blue btn-sm">🗺️ Ver Rota</a>
-    <button class="btn btn-green btn-sm" data-confirm="${o._id}">✅ Confirmar Entrega</button>
+  ${o.cardMessage?`<div style="background:var(--petal);padding:10px;border-radius:8px;font-size:12px;font-style:italic;margin-bottom:10px;border-left:3px solid var(--rose)">"${o.cardMessage}"</div>`:''}
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a href="https://maps.google.com/?q=${encodeURIComponent(o.deliveryAddress||'')}" target="_blank" class="btn btn-blue btn-sm" style="flex:1;justify-content:center;text-align:center">🗺️ Ver Rota</a>
+    <button class="btn btn-green btn-sm" data-confirm="${o._id}" style="flex:1;justify-content:center">✅ Confirmar Entrega</button>
   </div>
-</div>`).join('')}`;
+</div>`;
+}).join('')}`;
 }
+
 
 // ── FINANCEIRO ───────────────────────────────────────────────
 function renderFinanceiro(){
@@ -1023,6 +1242,89 @@ function renderAlertas(){
 </div>`;
 }
 
+// ── USUARIOS MODAL ───────────────────────────────────────────
+function showNewUserModal(user=null){
+  const edit=!!user;
+  S._modal=`<div class="mo" id="mo"><div class="mo-box" onclick="event.stopPropagation()">
+  <div class="mo-title">${edit?'✏️ Editar':'➕ Novo'} Usuário</div>
+  <div class="fr2">
+    <div class="fg"><label class="fl">Nome completo *</label><input class="fi" id="mu-name" value="${user?.name||''}"/></div>
+    <div class="fg"><label class="fl">E-mail *</label><input class="fi" id="mu-email" type="email" value="${user?.email||''}"/></div>
+    <div class="fg"><label class="fl">Senha ${edit?'(deixe em branco para não alterar)':'*'}</label><input class="fi" id="mu-pass" type="password" placeholder="Mínimo 6 caracteres"/></div>
+    <div class="fg"><label class="fl">WhatsApp</label><input class="fi" id="mu-phone" placeholder="(92) 9xxxx-xxxx" value="${user?.phone||''}"/></div>
+    <div class="fg"><label class="fl">Perfil *</label>
+      <select class="fi" id="mu-role">
+        ${['Administrador','Gerente','Atendimento','Producao','Expedicao','Financeiro','Entregador'].map(r=>`<option value="${r}" ${user?.role===r?'selected':''}>${r}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label class="fl">Unidade *</label>
+      <select class="fi" id="mu-unit">
+        <option value="Loja Novo Aleixo" ${user?.unit==='Loja Novo Aleixo'?'selected':''}>Loja Novo Aleixo</option>
+        <option value="Loja Allegro Mall" ${user?.unit==='Loja Allegro Mall'?'selected':''}>Loja Allegro Mall</option>
+        <option value="CDLE" ${user?.unit==='CDLE'?'selected':''}>CDLE</option>
+        <option value="Todas" ${user?.unit==='Todas'?'selected':''}>Todas (Admin)</option>
+      </select>
+    </div>
+    <div class="fg"><label class="fl">Taxa de Comissão (%)</label><input class="fi" type="number" id="mu-comm" step="0.1" placeholder="0" value="${user?.commissionRate||0}"/></div>
+    <div class="fg"><label class="fl">Tipo Comissão</label>
+      <select class="fi" id="mu-comm-type">
+        <option value="percentual" ${user?.commissionType==='percentual'?'selected':''}>Percentual (%)</option>
+        <option value="fixo" ${user?.commissionType==='fixo'?'selected':''}>Valor Fixo (R$)</option>
+      </select>
+    </div>
+  </div>
+  <label class="cb" style="margin-bottom:12px;"><input type="checkbox" id="mu-active" ${user?.active!==false?'checked':''}/><span style="font-size:12px">Usuário ativo</span></label>
+  <div class="mo-foot">
+    <button class="btn btn-primary" id="btn-sv-user">Salvar Usuário</button>
+    <button class="btn btn-ghost" id="btn-mo-close">Cancelar</button>
+  </div>
+  </div></div>`;
+  render();
+  document.getElementById('btn-mo-close')?.addEventListener('click',()=>{S._modal='';render();});
+  document.getElementById('btn-sv-user')?.addEventListener('click',()=>saveUser(user?._id));
+}
+
+async function saveUser(editId=null){
+  const name=document.getElementById('mu-name')?.value.trim();
+  const email=document.getElementById('mu-email')?.value.trim();
+  const pass=document.getElementById('mu-pass')?.value;
+  const role=document.getElementById('mu-role')?.value;
+  const unit=document.getElementById('mu-unit')?.value;
+  if(!name) return toast('❌ Nome obrigatório');
+  if(!email) return toast('❌ E-mail obrigatório');
+  if(!editId&&!pass) return toast('❌ Senha obrigatória');
+  if(!editId&&pass.length<6) return toast('❌ Senha mínimo 6 caracteres');
+  const data={
+    name, email, role, unit,
+    phone:document.getElementById('mu-phone')?.value||'',
+    commissionRate:parseFloat(document.getElementById('mu-comm')?.value)||0,
+    commissionType:document.getElementById('mu-comm-type')?.value||'percentual',
+    active:document.getElementById('mu-active')?.checked,
+  };
+  if(pass) data.password=pass;
+  try{
+    S.loading=true;S._modal='';render();
+    let u;
+    if(editId){
+      u=await PUT('/users/'+editId,data);
+      S.users=S.users.map(x=>x._id===editId?u:x);
+    }else{
+      u=await POST('/users',data);
+      S.users.unshift(u);
+    }
+    S.loading=false;render();
+    toast(editId?'✅ Usuário atualizado!':'✅ Usuário cadastrado! Login: '+email);
+  }catch(e){S.loading=false;render();}
+}
+
+async function toggleUserActive(id, currentActive){
+  try{
+    const u=await PATCH('/users/'+id+'/toggle',{});
+    S.users=S.users.map(x=>x._id===id?{...x,active:!currentActive}:x);
+    render();toast(!currentActive?'✅ Usuário ativado!':'🔒 Usuário desativado!');
+  }catch(e){}
+}
+
 // ── IA ───────────────────────────────────────────────────────
 function renderIA(){
   return`
@@ -1074,36 +1376,36 @@ function renderIA(){
 
 // ── USUÁRIOS ─────────────────────────────────────────────────
 function renderUsuarios(){
-  const mockUsers=[
-    {name:'Administrador',email:'admin@florevita.com',role:'Administrador',unit:'Todas',active:true},
-    {name:'Gerente Aleixo',email:'gerente.aleixo@lacoseternos.com',role:'Gerente',unit:'Loja Novo Aleixo',active:true},
-    {name:'Atendente Aleixo',email:'loja1@florevita.com',role:'Atendimento',unit:'Loja Novo Aleixo',active:true},
-    {name:'Gerente Allegro',email:'gerente.allegro@lacoseternos.com',role:'Gerente',unit:'Loja Allegro Mall',active:true},
-    {name:'Atendente Allegro',email:'atendente.allegro@lacoseternos.com',role:'Atendimento',unit:'Loja Allegro Mall',active:true},
-    {name:'Gerente CDLE',email:'gerente.cdle@lacoseternos.com',role:'Gerente',unit:'CDLE',active:true},
-    {name:'Produção CDLE',email:'cd@florevita.com',role:'Producao',unit:'CDLE',active:true},
-    {name:'Expedição CDLE',email:'expedicao.cdle@lacoseternos.com',role:'Expedicao',unit:'CDLE',active:true},
-    {name:'Entregador 1',email:'entregador1.cdle@lacoseternos.com',role:'Entregador',unit:'CDLE',active:true},
-    {name:'Financeiro CDLE',email:'financeiro.cdle@lacoseternos.com',role:'Financeiro',unit:'CDLE',active:true},
-  ];
+  const list = S.users.filter(u => !S._userSearch || 
+    u.name?.toLowerCase().includes(S._userSearch.toLowerCase()) ||
+    u.email?.toLowerCase().includes(S._userSearch.toLowerCase())
+  );
   return`
+<div style="display:flex;gap:8px;margin-bottom:14px;align-items:center;">
+  <div class="search-box" style="flex:1"><span class="si">🔍</span><input class="fi" id="user-search" placeholder="Buscar usuário..." value="${S._userSearch}"/></div>
+  <button class="btn btn-primary" id="btn-new-user">+ Novo Usuário</button>
+  <button class="btn btn-ghost btn-sm" id="btn-rel-users">🔄</button>
+</div>
 <div class="card">
   <div class="card-title">Equipe Laços Eternos
-    <button class="btn btn-primary btn-sm" id="btn-new-user">+ Novo Usuário</button>
+    <span style="font-size:11px;color:var(--muted);font-family:'DM Sans'">${S.users.length} usuários</span>
   </div>
-  <table><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Unidade</th><th>Status</th><th></th></tr></thead>
-  <tbody>${mockUsers.map(u=>`<tr>
-    <td><div style="display:flex;align-items:center;gap:7px;"><div class="av" style="width:26px;height:26px;font-size:10px">${ini(u.name)}</div><span style="font-weight:500">${u.name}</span></div></td>
+  ${list.length===0?`<div class="empty"><div class="empty-icon">👥</div><p>${S.users.length===0?'Carregando...':'Nenhum resultado'}</p></div>`:`
+  <div class="tw"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Unidade</th><th>Comissão</th><th>Status</th><th></th></tr></thead>
+  <tbody>${list.map(u=>`<tr>
+    <td><div style="display:flex;align-items:center;gap:7px;"><div class="av" style="width:28px;height:28px;font-size:10px">${ini(u.name)}</div><span style="font-weight:500">${u.name}</span></div></td>
     <td style="color:var(--muted);font-size:11px">${u.email}</td>
     <td><span class="tag ${rolec(u.role)}">${u.role}</span></td>
     <td style="font-size:11px">${u.unit}</td>
-    <td><span class="tag t-green">Ativo</span></td>
-    <td><button class="btn btn-ghost btn-xs">✏️</button></td>
-  </tr>`).join('')}</tbody></table>
-</div>`;
-}
-
-// ── CONFIG ───────────────────────────────────────────────────
+    <td style="font-size:11px;color:var(--muted)">${u.commissionRate?u.commissionRate+'%':'—'}</td>
+    <td><span class="tag ${u.active!==false?'t-green':'t-red'}">${u.active!==false?'Ativo':'Inativo'}</span></td>
+    <td style="display:flex;gap:4px;">
+      <button class="btn btn-ghost btn-xs" data-edit-user="${u._id}">✏️</button>
+      <button class="btn btn-ghost btn-xs" data-toggle-user="${u._id}" data-active="${u.active!==false}">${u.active!==false?'🔒':'🔓'}</button>
+    </td>
+  </tr>`).join('')}
+  </tbody></table></div>`}
+</div>`;}
 function renderConfig(){
   return`
 <div class="g2">
@@ -1113,6 +1415,24 @@ function renderConfig(){
     <div class="fg"><label class="fl">CNPJ</label><input class="fi" placeholder="00.000.000/0001-00"/></div>
     <div class="fg"><label class="fl">WhatsApp</label><input class="fi" placeholder="(xx) 9xxxx-xxxx"/></div>
     <button class="btn btn-primary" onclick="toast('✅ Salvo!')">Salvar</button>
+    <hr/>
+    <div class="card-title" style="font-size:13px">🚚 Taxas de Entrega</div>
+    <div style="margin-bottom:10px;">
+      ${Object.entries(DELIVERY_FEES).map(([city,zones])=>`
+      <div style="margin-bottom:8px;">
+        <div style="font-weight:600;font-size:12px;margin-bottom:4px">${city}</div>
+        ${Object.entries(zones).map(([zone,fee])=>`
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <span style="flex:1;font-size:12px">${zone}</span>
+          <input type="number" value="${fee}" step="0.50" style="width:80px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;" data-fee-city="${city}" data-fee-zone="${zone}" class="fee-input"/>
+          <span style="font-size:11px;color:var(--muted)">R$</span>
+        </div>`).join('')}
+      </div>`).join('')}
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+      <button class="btn btn-primary btn-sm" id="btn-save-fees">💾 Salvar Taxas</button>
+      <button class="btn btn-ghost btn-sm" id="btn-add-zone">+ Nova Zona</button>
+    </div>
     <hr/>
     <div class="card-title" style="font-size:13px">🔗 Integrações</div>
     ${[
@@ -1137,14 +1457,117 @@ function renderConfig(){
     <div class="card-title" style="font-size:13px">💡 Sugerir Melhoria</div>
     <textarea class="fi" id="sug-txt" placeholder="Sua ideia..." rows="3"></textarea>
     <button class="btn btn-outline btn-sm" id="btn-sug" style="margin-top:8px">Enviar</button>
+    <hr/>
+    <div class="card-title" style="font-size:13px">📲 Notificação de Entrega (WhatsApp)</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Variáveis: {nome} {produto} {data} {floricultura}</div>
+    <textarea class="fi" id="notif-template" rows="4" placeholder="Mensagem padrão...">${JSON.parse(localStorage.getItem('fv_notif_cfg')||'{}').template||'Olá, {nome}! 🌸 Seu pedido foi entregue com sucesso. Esperamos que tenha amado! 💖 Floricultura Laços Eternos'}</textarea>
+    <div class="notif-msg-preview" id="notif-preview">${(JSON.parse(localStorage.getItem('fv_notif_cfg')||'{}').template||'Olá, {nome}! 🌸 Seu pedido foi entregue com sucesso. Esperamos que tenha amado! 💖 Floricultura Laços Eternos').replace(/{nome}/gi,'Maria').replace(/{produto}/gi,'Buquê Premium').replace(/{data}/gi,new Date().toLocaleDateString('pt-BR')).replace(/{floricultura}/gi,'Laços Eternos')}</div>
+    <button class="btn btn-primary btn-sm" id="btn-save-notif" style="margin-top:8px">💾 Salvar Mensagem</button>
+    <hr/>
+    <div class="card-title" style="font-size:13px">📊 Histórico de Notificações</div>
+    <div style="max-height:200px;overflow-y:auto;">
+    ${(JSON.parse(localStorage.getItem('fv_notif_logs')||'[]')).slice(0,8).map(l=>`
+    <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:11px;">
+      <div style="display:flex;justify-content:space-between;">
+        <span style="font-weight:500">${l.client} — ${l.orderNum}</span>
+        <span class="tag ${l.sent?'t-green':'t-red'}">${l.sent?'Enviado':'Falhou'}</span>
+      </div>
+      <div style="color:var(--muted);margin-top:2px">${new Date(l.at).toLocaleString('pt-BR')}</div>
+    </div>`).join('')||'<div style="color:var(--muted);font-size:12px;padding:8px 0">Nenhuma notificação enviada ainda.</div>'}
+    </div>
   </div>
 </div>`;
 }
 
+
+// ── DELIVERY INTELLIGENCE ─────────────────────────────────────
+function getDeliveryRisk(order) {
+  if (!order.scheduledDate) return 'ok';
+  const now = new Date();
+  const scheduled = new Date(order.scheduledDate);
+  const today = now.toDateString() === scheduled.toDateString();
+  if (!today) return 'ok';
+  
+  const h = now.getHours();
+  const period = order.scheduledPeriod;
+  const time = order.scheduledTime;
+  
+  // If specific time
+  if (time) {
+    const [hh, mm] = time.split(':').map(Number);
+    const diffMin = (hh * 60 + mm) - (h * 60 + now.getMinutes());
+    if (diffMin < 30) return 'high';
+    if (diffMin < 60) return 'medium';
+    return 'ok';
+  }
+  // By period
+  if (period === 'Manhã' && h >= 11) return h >= 12 ? 'high' : 'medium';
+  if (period === 'Tarde' && h >= 17) return h >= 18 ? 'high' : 'medium';
+  if (period === 'Noite' && h >= 21) return 'high';
+  return 'ok';
+}
+
+function getRiskLabel(risk) {
+  return {
+    'high': '<span class="risk-badge risk-high">🚨 Risco de Atraso</span>',
+    'medium': '<span class="risk-badge risk-med">⚠️ Atenção</span>',
+    'ok': '<span class="risk-badge risk-ok">✅ No Prazo</span>'
+  }[risk] || '';
+}
+
+function sortDeliveryOrders(orders) {
+  const riskOrder = { high: 0, medium: 1, ok: 2 };
+  const periodOrder = { 'Manhã': 0, 'Tarde': 1, 'Noite': 2, 'Horário específico': 0 };
+  return [...orders].sort((a, b) => {
+    const ra = getDeliveryRisk(a), rb = getDeliveryRisk(b);
+    if (riskOrder[ra] !== riskOrder[rb]) return riskOrder[ra] - riskOrder[rb];
+    const pa = periodOrder[a.scheduledPeriod] ?? 3;
+    const pb = periodOrder[b.scheduledPeriod] ?? 3;
+    if (pa !== pb) return pa - pb;
+    if (a.scheduledTime && b.scheduledTime) return a.scheduledTime.localeCompare(b.scheduledTime);
+    return 0;
+  });
+}
+
+function getBorderClass(risk) {
+  return { high: 'delivery-priority', medium: 'delivery-warning', ok: 'delivery-ok' }[risk] || '';
+}
+
+// WhatsApp notification on delivery
+function sendDeliveryNotification(order) {
+  const cfg = JSON.parse(localStorage.getItem('fv_notif_cfg') || '{}');
+  const clientPhone = order.client?.phone || order.clientPhone || '';
+  if (!clientPhone) return;
+  
+  const template = cfg.template || 'Olá, {nome}! 🌸 Seu pedido foi entregue com sucesso. Esperamos que tenha amado! 💖 Floricultura Laços Eternos';
+  const clientName = order.client?.name || order.clientName || 'Cliente';
+  const produtos = (order.items || []).map(i => i.name).join(', ');
+  const data = order.scheduledDate ? new Date(order.scheduledDate).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR');
+  
+  const msg = template
+    .replace(/{nome}/gi, clientName)
+    .replace(/{produto}/gi, produtos)
+    .replace(/{data}/gi, data)
+    .replace(/{floricultura}/gi, 'Laços Eternos');
+  
+  const phone = clientPhone.replace(/\D/g, '');
+  const url = `https://wa.me/55${phone}?text=${encodeURIComponent(msg)}`;
+  window.open(url, '_blank');
+  
+  // Log notification
+  const logs = JSON.parse(localStorage.getItem('fv_notif_logs') || '[]');
+  logs.unshift({ orderId: order._id, orderNum: order.orderNumber, client: clientName, phone, msg, sent: true, at: new Date().toISOString() });
+  localStorage.setItem('fv_notif_logs', JSON.stringify(logs.slice(0, 50)));
+  toast('📱 Notificação enviada para ' + clientName + '!');
+}
+
+
 // ── MODALS ───────────────────────────────────────────────────
 function showNewClientModal(){
+  const cliCode = 'CLI-'+String(S.clients.length+1).padStart(3,'0');
   S._modal=`<div class="mo" id="mo"><div class="mo-box" onclick="event.stopPropagation()">
   <div class="mo-title">➕ Novo Cliente</div>
+  <div class="fg"><label class="fl">Código do Cliente</label><input class="fi" value="${cliCode}" readonly style="background:var(--cream);font-family:monospace"/></div>
   <div class="fr2">
     <div class="fg"><label class="fl">Nome *</label><input class="fi" id="mc-name"/></div>
     <div class="fg"><label class="fl">WhatsApp *</label><input class="fi" id="mc-phone" placeholder="(xx) 9xxxx-xxxx"/></div>
@@ -1166,69 +1589,206 @@ function showNewClientModal(){
   </div>
   </div></div>`;
   render();
-  document.getElementById('mo')?.addEventListener('click',()=>{S._modal='';render();});
   document.getElementById('btn-mo-close')?.addEventListener('click',()=>{S._modal='';render();});
   document.getElementById('btn-sv-cli')?.addEventListener('click',saveClient);
 }
 
 async function saveClient(){
+  // Lê todos os campos ANTES de fechar o modal
   const name=document.getElementById('mc-name')?.value.trim();
   const phone=document.getElementById('mc-phone')?.value.trim();
+  const email=document.getElementById('mc-email')?.value||'';
+  const birthday=document.getElementById('mc-bday')?.value||undefined;
+  const street=document.getElementById('mc-street')?.value||'';
+  const number=document.getElementById('mc-num')?.value||'';
+  const neighborhood=document.getElementById('mc-neigh')?.value||'';
+  const segment=document.getElementById('mc-seg')?.value||'Novo';
+  const notes=document.getElementById('mc-notes')?.value||'';
+  const cliCode='CLI-'+String(S.clients.length+1).padStart(3,'0');
+
   if(!name||!phone) return toast('❌ Nome e WhatsApp obrigatórios');
+
+  // Só fecha o modal depois de ler os campos
+  S._modal='';
+  S.loading=true;
+  render();
+
   try{
-    S.loading=true;S._modal='';render();
-    const c=await POST('/clients',{name,phone,email:document.getElementById('mc-email')?.value,birthday:document.getElementById('mc-bday')?.value||undefined,address:{street:document.getElementById('mc-street')?.value,number:document.getElementById('mc-num')?.value,neighborhood:document.getElementById('mc-neigh')?.value},segment:document.getElementById('mc-seg')?.value,notes:document.getElementById('mc-notes')?.value,unit:S.user.unit||'Loja Novo Aleixo'});
-    S.clients.unshift(c);S.loading=false;render();toast('✅ Cliente cadastrado!');
-  }catch(e){S.loading=false;render();}
+    const validUnits=['Loja Novo Aleixo','Loja Allegro Mall','CDLE'];
+    const unit=validUnits.includes(S.user.unit)?S.user.unit:'Loja Novo Aleixo';
+    const c=await POST('/clients',{
+      code:cliCode, name, phone, email,
+      birthday,
+      address:{street, number, neighborhood},
+      segment, notes, unit
+    });
+    S.clients.unshift(c);
+    S.loading=false;
+    S.page='clientes';
+    render();
+    toast('✅ Cliente '+name+' cadastrado!');
+  }catch(e){
+    S.loading=false;
+    render();
+  }
 }
 
 function showNewProductModal(prod=null){
   const edit=!!prod;
-  S._modal=`<div class="mo" id="mo"><div class="mo-box" onclick="event.stopPropagation()">
-  <div class="mo-title">${edit?'✏️ Editar':'🌹 Novo'} Produto</div>
+  const nextCode = 'PROD-'+String(S.products.length+1).padStart(3,'0');
+  const prodCode = prod?.code || nextCode;
+  S._modal=`<div class="mo" id="mo" style="z-index:200">
+  <div class="mo-box" id="mo-box">
+  <div class="mo-title">${edit?'✏️ Editar':'🌹 Novo'} Produto ${edit?'<span class="code-badge">'+prodCode+'</span>':''}</div>
   <div class="fg">
-    <label class="fl">Fotos do produto (até 3)</label>
-    <div class="img-up" id="img-up-area">
-      ${prod?.images?.[0]?`<img src="${prod.images[0]}" class="img-prev" id="img-prev"/>`:`<div><div style="font-size:24px;margin-bottom:6px">📷</div><div style="font-size:12px;color:var(--muted)">Clique para adicionar foto</div></div>`}
+    <label class="fl">Foto do produto</label>
+    <div id="img-up-area" style="border:2px dashed var(--border);border-radius:12px;padding:16px;text-align:center;cursor:pointer;min-height:120px;display:flex;align-items:center;justify-content:center;background:var(--cream);">
+      ${prod?.images?.[0]
+        ? '<img src="'+prod.images[0]+'" style="max-width:100%;max-height:180px;object-fit:contain;border-radius:8px;" id="img-prev"/>'
+        : '<div><div style="font-size:32px;margin-bottom:8px">📷</div><div style="font-size:12px;color:var(--muted)">Clique para adicionar foto</div></div>'}
     </div>
-    <input type="file" id="prod-img-file" accept="image/*" style="display:none" multiple/>
+    <input type="file" id="prod-img-file" accept="image/*" style="display:none"/>
   </div>
   <div class="fr2">
-    <div class="fg"><label class="fl">Nome *</label><input class="fi" id="mp-name" value="${prod?.name||''}"/></div>
+    <div class="fg"><label class="fl">Código</label><input class="fi" id="mp-code" value="${prodCode}" readonly style="background:var(--cream);font-family:monospace"/></div>
     <div class="fg"><label class="fl">Categoria</label>
-      <select class="fi" id="mp-cat">${['Rosa','Buquê','Orquídea','Planta','Kit','Vaso','Flor','Coroa','Cesta','Embalagem','Adicional'].map(c=>`<option ${prod?.category===c?'selected':''}>${c}</option>`).join('')}</select>
+      <select class="fi" id="mp-cat">${['Rosa','Buquê','Orquídea','Planta','Kit','Vaso','Flor','Coroa','Cesta','Embalagem','Adicional'].map(c=>'<option '+(prod?.category===c?'selected':'')+'>'+c+'</option>').join('')}</select>
     </div>
+    <div class="fg" style="grid-column:span 2"><label class="fl">Nome *</label><input class="fi" id="mp-name" value="${prod?.name||''}"/></div>
     <div class="fg"><label class="fl">Preço de Custo (R$)</label><input class="fi" type="number" id="mp-cost" step="0.01" value="${prod?.costPrice||''}"/></div>
     <div class="fg"><label class="fl">Preço de Venda (R$)</label><input class="fi" type="number" id="mp-price" step="0.01" value="${prod?.salePrice||''}"/></div>
     <div class="fg"><label class="fl">Estoque</label><input class="fi" type="number" id="mp-stock" value="${prod?.stock||0}"/></div>
     <div class="fg"><label class="fl">Estoque Mínimo</label><input class="fi" type="number" id="mp-minstk" value="${prod?.minStock||5}"/></div>
   </div>
+  <div id="mp-margin" style="font-size:12px;color:var(--leaf);margin-bottom:8px;padding:6px 10px;background:var(--leaf-l);border-radius:6px;display:none"></div>
   <div class="fg"><label class="fl">Descrição</label><textarea class="fi" id="mp-desc" rows="2">${prod?.description||''}</textarea></div>
-  <div class="fg"><label class="fl">Notas de Produção (visível para florista)</label><textarea class="fi" id="mp-prodnotes" rows="2" placeholder="Como montar, flores utilizadas...">${prod?.productionNotes||''}</textarea></div>
+  <div class="fg"><label class="fl">Notas de Produção (visível para o florista)</label><textarea class="fi" id="mp-prodnotes" rows="2" placeholder="Como montar, flores utilizadas, cuidados...">${prod?.productionNotes||''}</textarea></div>
   <label class="cb" style="margin-bottom:12px;"><input type="checkbox" id="mp-site" ${prod?.activeOnSite?'checked':''}/><span style="font-size:12px">Ativo no site (e-commerce)</span></label>
-  <div id="mp-margin" style="font-size:12px;color:var(--leaf);margin-bottom:8px"></div>
+  
+  <hr style="margin:16px 0"/>
+  <div style="font-size:12px;font-weight:600;color:var(--ink);margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+    <span style="font-size:16px">📋</span> Tributação
+    <span style="font-size:10px;color:var(--muted);font-weight:400">(para emissão de nota fiscal)</span>
+  </div>
+  <div class="fr3">
+    <div class="fg"><label class="fl">NCM</label><input class="fi" id="mp-ncm" placeholder="ex: 0603.10.00" value="${prod?.taxation?.ncm||''}"/></div>
+    <div class="fg"><label class="fl">CFOP</label><input class="fi" id="mp-cfop" placeholder="ex: 5102" value="${prod?.taxation?.cfop||''}"/></div>
+    <div class="fg"><label class="fl">Código CEST</label><input class="fi" id="mp-cest" placeholder="ex: 01.001.00" value="${prod?.taxation?.cest||''}"/></div>
+  </div>
+  <div class="fr2">
+    <div class="fg"><label class="fl">CST / CSOSN</label>
+      <select class="fi" id="mp-cst">
+        <option value="">Selecionar...</option>
+        <optgroup label="Simples Nacional (CSOSN)">
+          <option value="101" ${prod?.taxation?.cst==='101'?'selected':''}>101 — Tributada com permissão de crédito</option>
+          <option value="102" ${prod?.taxation?.cst==='102'?'selected':''}>102 — Tributada sem permissão de crédito</option>
+          <option value="103" ${prod?.taxation?.cst==='103'?'selected':''}>103 — Isenta no Simples Nacional</option>
+          <option value="300" ${prod?.taxation?.cst==='300'?'selected':''}>300 — Imune</option>
+          <option value="400" ${prod?.taxation?.cst==='400'?'selected':''}>400 — Não tributada</option>
+          <option value="500" ${prod?.taxation?.cst==='500'?'selected':''}>500 — ICMS cobrado por ST</option>
+        </optgroup>
+        <optgroup label="Regime Normal (CST)">
+          <option value="00" ${prod?.taxation?.cst==='00'?'selected':''}>00 — Tributada integralmente</option>
+          <option value="20" ${prod?.taxation?.cst==='20'?'selected':''}>20 — Com redução de BC</option>
+          <option value="40" ${prod?.taxation?.cst==='40'?'selected':''}>40 — Isenta</option>
+          <option value="41" ${prod?.taxation?.cst==='41'?'selected':''}>41 — Não tributada</option>
+          <option value="60" ${prod?.taxation?.cst==='60'?'selected':''}>60 — ICMS cobrado anteriormente por ST</option>
+        </optgroup>
+      </select>
+    </div>
+    <div class="fg"><label class="fl">Origem do Produto</label>
+      <select class="fi" id="mp-origin">
+        <option value="0" ${prod?.taxation?.origin==='0'?'selected':''}>0 — Nacional</option>
+        <option value="1" ${prod?.taxation?.origin==='1'?'selected':''}>1 — Estrangeira (importação direta)</option>
+        <option value="2" ${prod?.taxation?.origin==='2'?'selected':''}>2 — Estrangeira (adquirida no mercado interno)</option>
+        <option value="3" ${prod?.taxation?.origin==='3'?'selected':''}>3 — Nacional com +40% de conteúdo estrangeiro</option>
+        <option value="4" ${prod?.taxation?.origin==='4'?'selected':''}>4 — Nacional produção conforme processos básicos</option>
+        <option value="5" ${prod?.taxation?.origin==='5'?'selected':''}>5 — Nacional com até 40% de conteúdo estrangeiro</option>
+        <option value="6" ${prod?.taxation?.origin==='6'?'selected':''}>6 — Estrangeira com similar nacional</option>
+        <option value="7" ${prod?.taxation?.origin==='7'?'selected':''}>7 — Estrangeira sem similar nacional</option>
+        <option value="8" ${prod?.taxation?.origin==='8'?'selected':''}>8 — Nacional mercadoria ou bem com conteúdo de importação</option>
+      </select>
+    </div>
+  </div>
+  <div class="fr3">
+    <div class="fg"><label class="fl">Alíquota ICMS (%)</label><input class="fi" type="number" id="mp-icms" placeholder="0.00" step="0.01" value="${prod?.taxation?.icms||''}"/></div>
+    <div class="fg"><label class="fl">Alíquota ISS (%)</label><input class="fi" type="number" id="mp-iss" placeholder="0.00" step="0.01" value="${prod?.taxation?.iss||''}"/></div>
+    <div class="fg"><label class="fl">Alíquota PIS (%)</label><input class="fi" type="number" id="mp-pis" placeholder="0.65" step="0.01" value="${prod?.taxation?.pis||''}"/></div>
+  </div>
+  <div class="fr2">
+    <div class="fg"><label class="fl">Alíquota COFINS (%)</label><input class="fi" type="number" id="mp-cofins" placeholder="3.00" step="0.01" value="${prod?.taxation?.cofins||''}"/></div>
+    <div class="fg"><label class="fl">Unidade Tributável</label>
+      <select class="fi" id="mp-unit-trib">
+        <option value="UN" ${prod?.taxation?.unitTrib==='UN'?'selected':''}>UN — Unidade</option>
+        <option value="CX" ${prod?.taxation?.unitTrib==='CX'?'selected':''}>CX — Caixa</option>
+        <option value="KG" ${prod?.taxation?.unitTrib==='KG'?'selected':''}>KG — Quilograma</option>
+        <option value="PC" ${prod?.taxation?.unitTrib==='PC'?'selected':''}>PC — Peça</option>
+        <option value="DZ" ${prod?.taxation?.unitTrib==='DZ'?'selected':''}>DZ — Dúzia</option>
+      </select>
+    </div>
+  </div>
+
   <div class="mo-foot">
-    <button class="btn btn-primary" id="btn-sv-prod" data-pid="${prod?._id||''}">Salvar</button>
+    <button class="btn btn-primary" id="btn-sv-prod">Salvar Produto</button>
     <button class="btn btn-ghost" id="btn-mo-close">Cancelar</button>
   </div>
   </div></div>`;
   render();
-  document.getElementById('mo')?.addEventListener('click',()=>{S._modal='';render();});
+  // Bind ONLY to close button, NOT overlay — prevents accidental close
   document.getElementById('btn-mo-close')?.addEventListener('click',()=>{S._modal='';render();});
   const ia=document.getElementById('img-up-area');
   const ifi=document.getElementById('prod-img-file');
   ia?.addEventListener('click',()=>ifi?.click());
-  ifi?.addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{ia.innerHTML=`<img src="${ev.target.result}" class="img-prev"/>`;S._prodImg=ev.target.result;};r.readAsDataURL(f);});
-  const calc=()=>{const c=parseFloat(document.getElementById('mp-cost')?.value||0),p=parseFloat(document.getElementById('mp-price')?.value||0),el=document.getElementById('mp-margin');if(el&&p>0)el.textContent=`Margem: ${((p-c)/p*100).toFixed(1)}%`;};
+  ifi?.addEventListener('change',e=>{
+    const f=e.target.files[0];if(!f)return;
+    const r=new FileReader();
+    r.onload=ev=>{
+      ia.innerHTML='<img src="'+ev.target.result+'" style="max-width:100%;max-height:180px;object-fit:contain;border-radius:8px;"/>';
+      S._prodImg=ev.target.result;
+    };
+    r.readAsDataURL(f);
+  });
+  const calc=()=>{
+    const c=parseFloat(document.getElementById('mp-cost')?.value||0);
+    const p=parseFloat(document.getElementById('mp-price')?.value||0);
+    const el=document.getElementById('mp-margin');
+    if(el&&p>0){el.style.display='block';el.textContent='Margem: '+((p-c)/p*100).toFixed(1)+'%';}
+  };
   document.getElementById('mp-cost')?.addEventListener('input',calc);
   document.getElementById('mp-price')?.addEventListener('input',calc);
-  document.getElementById('btn-sv-prod')?.addEventListener('click',()=>saveProduct(prod?._id));
+  document.getElementById('btn-sv-prod')?.addEventListener('click',()=>saveProduct(prod?._id, prodCode));
 }
 
-async function saveProduct(editId=null){
+
+async function saveProduct(editId=null, prodCode=null){
   const name=document.getElementById('mp-name')?.value.trim();
   if(!name) return toast('❌ Nome obrigatório');
-  const data={name,category:document.getElementById('mp-cat')?.value,costPrice:parseFloat(document.getElementById('mp-cost')?.value)||0,salePrice:parseFloat(document.getElementById('mp-price')?.value)||0,stock:parseInt(document.getElementById('mp-stock')?.value)||0,minStock:parseInt(document.getElementById('mp-minstk')?.value)||5,description:document.getElementById('mp-desc')?.value,productionNotes:document.getElementById('mp-prodnotes')?.value,activeOnSite:document.getElementById('mp-site')?.checked,unit:S.user.unit||'Todas'};
+  // Lê campos de tributação
+  const taxation = {
+    ncm: document.getElementById('mp-ncm')?.value||'',
+    cfop: document.getElementById('mp-cfop')?.value||'',
+    cest: document.getElementById('mp-cest')?.value||'',
+    cst: document.getElementById('mp-cst')?.value||'',
+    origin: document.getElementById('mp-origin')?.value||'0',
+    icms: parseFloat(document.getElementById('mp-icms')?.value)||0,
+    iss: parseFloat(document.getElementById('mp-iss')?.value)||0,
+    pis: parseFloat(document.getElementById('mp-pis')?.value)||0,
+    cofins: parseFloat(document.getElementById('mp-cofins')?.value)||0,
+    unitTrib: document.getElementById('mp-unit-trib')?.value||'UN',
+  };
+  const data={
+    name, code:prodCode,
+    category:document.getElementById('mp-cat')?.value,
+    costPrice:parseFloat(document.getElementById('mp-cost')?.value)||0,
+    salePrice:parseFloat(document.getElementById('mp-price')?.value)||0,
+    stock:parseInt(document.getElementById('mp-stock')?.value)||0,
+    minStock:parseInt(document.getElementById('mp-minstk')?.value)||5,
+    description:document.getElementById('mp-desc')?.value,
+    productionNotes:document.getElementById('mp-prodnotes')?.value,
+    activeOnSite:document.getElementById('mp-site')?.checked,
+    taxation,
+    unit:'Todas'
+  };
   if(S._prodImg) data.images=[S._prodImg];
   try{
     S.loading=true;S._modal='';S._prodImg=null;render();
@@ -1241,26 +1801,99 @@ async function saveProduct(editId=null){
 
 async function finalizePDV(){
   if(!PDV.cart.length) return toast('❌ Adicione produtos');
-  if(!PDV.clientId&&!PDV.clientName) return toast('❌ Informe o cliente');
+  const validUnitsCheck = ['Loja Novo Aleixo','Loja Allegro Mall','CDLE'];
+  if(!validUnitsCheck.includes(S.user.unit)&&!PDV.saleUnit) return toast('❌ Selecione a unidade de venda');
+  // Valida unidade para Admin
+  if((S.user.unit==='Todas'||S.user.role==='Administrador')&&!PDV.saleUnit) return toast('❌ Selecione a unidade de venda');
+  if(!PDV.clientId&&!PDV.clientName) return toast('❌ Informe o nome do cliente');
+  if(!PDV.clientId&&!PDV.clientPhone) return toast('❌ WhatsApp do cliente é obrigatório');
+  if(PDV.type==='Retirada'&&!PDV.pickupUnit) return toast('❌ Selecione a loja de retirada');
   if(PDV.type==='Delivery'&&PDV.isCondominium&&(!PDV.block||!PDV.apt)) return toast('❌ Bloco e apartamento obrigatórios');
   const sub=PDV.cart.reduce((s,i)=>s+i.price*i.qty,0);
-  const total=sub-(PDV.discount||0);
+  const deliveryFee=PDV.type==='Delivery'?(PDV.deliveryFee||0):0;
+  const total=sub-(PDV.discount||0)+deliveryFee;
   const addr=[PDV.street,PDV.number,PDV.neighborhood,PDV.city,PDV.isCondominium?`Bloco ${PDV.block} Ap ${PDV.apt}`:'',PDV.reference].filter(Boolean).join(', ');
-  const data={client:PDV.clientId||undefined,clientName:!PDV.clientId?PDV.clientName:undefined,clientPhone:!PDV.clientId?PDV.clientPhone:undefined,items:PDV.cart.map(i=>({product:i.id,name:i.name,qty:i.qty,unitPrice:i.price,totalPrice:i.price*i.qty})),subtotal:sub,discount:PDV.discount||0,total,payment:PDV.payment,type:PDV.type,scheduledDate:PDV.deliveryDate||undefined,scheduledPeriod:PDV.deliveryPeriod,scheduledTime:PDV.deliveryTime,recipient:PDV.recipient,cardMessage:PDV.cardMessage,notes:PDV.notes,deliveryAddress:addr,deliveryStreet:PDV.street,deliveryNumber:PDV.number,deliveryNeighborhood:PDV.neighborhood,deliveryReference:PDV.reference,isCondominium:PDV.isCondominium,block:PDV.block,apt:PDV.apt,source:'PDV',unit:S.user.unit||'Loja Novo Aleixo'};
+  // Determina unidade correta — nunca envia 'Todas'
+  const validUnits = ['Loja Novo Aleixo','Loja Allegro Mall','CDLE'];
+  const orderUnit = validUnits.includes(S.user.unit) ? S.user.unit : (PDV.saleUnit||'Loja Novo Aleixo');
+  const data={
+    ...(PDV.clientId ? {client:PDV.clientId} : {}),
+    clientName: PDV.clientName||undefined,
+    clientPhone: PDV.clientPhone||undefined,
+    items:PDV.cart.map(i=>({product:i.id,name:i.name,qty:i.qty,unitPrice:i.price,totalPrice:i.price*i.qty})),
+    subtotal:sub,discount:PDV.discount||0,total,
+    payment:PDV.payment,type:PDV.type,
+    scheduledDate:PDV.deliveryDate||undefined,
+    scheduledPeriod:PDV.deliveryPeriod,
+    scheduledTime:PDV.deliveryTime,
+    recipient:PDV.recipient,
+    cardMessage:PDV.cardMessage,
+    notes:PDV.notes,
+    deliveryAddress:addr,
+    deliveryStreet:PDV.street,
+    deliveryNumber:PDV.number,
+    deliveryNeighborhood:PDV.neighborhood,
+    deliveryReference:PDV.reference,
+    isCondominium:PDV.isCondominium,
+    block:PDV.block,apt:PDV.apt,
+    source:'PDV',
+    unit:orderUnit,
+    deliveryFee:PDV.deliveryFee||0,
+    deliveryZone:PDV.zone,
+    deliveryCity:PDV.city,
+    pickupUnit:PDV.pickupUnit||undefined,
+    notifyClient:PDV.notifyClient,
+    identifyClient:PDV.identifyClient,
+  };
   try{
     S.loading=true;render();
     const o=await POST('/orders',data);
     S.orders.unshift(o);
-    PDV={cart:[],discount:0,payment:'Pix',clientId:'',clientName:'',clientPhone:'',clientEmail:'',recipient:'',cardMessage:'',notes:'',deliveryDate:'',deliveryPeriod:'Manhã',deliveryTime:'',street:'',neighborhood:'',number:'',city:'',cep:'',reference:'',isCondominium:false,block:'',apt:'',type:'Delivery'};
+    // Envia notificação WhatsApp automaticamente
+    sendWhatsAppNotification(o);
+    PDV={cart:[],discount:0,payment:'Pix',clientId:'',clientName:'',clientPhone:'',clientEmail:'',recipient:'',cardMessage:'',notes:'',deliveryDate:'',deliveryPeriod:'Manhã',deliveryTime:'',street:'',neighborhood:'',number:'',city:'',cep:'',reference:'',isCondominium:false,block:'',apt:'',type:'Delivery',deliveryFee:0,zone:'',clientSearch:'',pickupUnit:'',saleUnit:'',notifyClient:true,identifyClient:true,_showQuickReg:false};
     S.loading=false;S.page='pedidos';render();toast('✅ Pedido '+o.orderNumber+' criado!');
   }catch(e){S.loading=false;render();}
+}
+
+function sendWhatsAppNotification(order){
+  const num = '5592993002433';
+  const items = (order.items||[]).map(i=>`• ${i.qty}x ${i.name}`).join('\n');
+  const msg = [
+    '🌺 *NOVO PEDIDO — Laços Eternos*',
+    '',
+    `*Nº do Pedido:* ${order.orderNumber||'—'}`,
+    `*Produto:*\n${items}`,
+    `*Destinatário:* ${order.recipient||'—'}`,
+    `*Endereço:* ${order.deliveryAddress||'Retirada no balcão'}`,
+    order.isCondominium&&order.block?`*Cond.:* Bloco ${order.block}, Ap ${order.apt}`:'',
+    `*Turno:* ${order.scheduledPeriod||'—'} ${order.scheduledTime||''}`,
+    order.scheduledDate?`*Data:* ${new Date(order.scheduledDate).toLocaleDateString('pt-BR')}`:'',
+    order.cardMessage?`*Cartão:* "${order.cardMessage}"`:'',
+    '',
+    `*Total:* ${new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(order.total||0)}`,
+    `*Pagamento:* ${order.payment||'—'}`,
+  ].filter(Boolean).join('\n');
+  
+  const url = `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
+  window.open(url, '_blank');
 }
 
 async function advanceOrder(id){
   const o=S.orders.find(x=>x._id===id);if(!o)return;
   const nxt={'Aguardando':'Em preparo','Em preparo':'Pronto','Pronto':'Saiu p/ entrega','Saiu p/ entrega':'Entregue'};
   const ns=nxt[o.status];if(!ns)return toast('Pedido já finalizado');
-  try{await PATCH('/orders/'+id+'/status',{status:ns});S.orders=S.orders.map(x=>x._id===id?{...x,status:ns}:x);render();toast('✅ Status: '+ns);}catch(e){}
+  try{
+    await PATCH('/orders/'+id+'/status',{status:ns});
+    S.orders=S.orders.map(x=>x._id===id?{...x,status:ns}:x);
+    render();
+    toast('✅ Status: '+ns);
+    // Auto notify client on delivery
+    if(ns==='Entregue'){
+      const updated=S.orders.find(x=>x._id===id);
+      if(updated) sendDeliveryNotification(updated);
+    }
+  }catch(e){}
 }
 
 async function sendChat(msg){
@@ -1279,6 +1912,70 @@ async function sendChat(msg){
 
 function scrollChat(){setTimeout(()=>{const el=document.getElementById('chat-wrap');if(el)el.scrollTop=el.scrollHeight;},100);}
 
+
+// ── DELIVERY HELPERS ────────────────────────────────────────
+function getDeliveryRisk(order) {
+  if (!order.scheduledDate && !order.scheduledTime) return 'none';
+  const now = new Date();
+  const delivDate = new Date(order.scheduledDate || now);
+  const [h, m] = (order.scheduledTime || '23:59').split(':').map(Number);
+  delivDate.setHours(h || 23, m || 59, 0, 0);
+  const diffMin = (delivDate - now) / 60000;
+  if (diffMin < 0) return 'late';
+  if (diffMin < 60) return 'critical';
+  if (diffMin < 120) return 'warning';
+  return 'ok';
+}
+
+function getRiskLabel(risk) {
+  return {late:'🚨 ATRASADO', critical:'⚠️ CRÍTICO', warning:'⏰ Atenção', ok:'✅ OK', none:'—'}[risk] || '—';
+}
+function getRiskColor(risk) {
+  return {late:'var(--red)', critical:'#FF6B00', warning:'var(--gold)', ok:'var(--leaf)', none:'var(--muted)'}[risk] || 'var(--muted)';
+}
+
+function sortOrdersByPriority(orders) {
+  const riskWeight = {late:0, critical:1, warning:2, ok:3, none:4};
+  const periodWeight = {'Manhã':0,'Tarde':1,'Noite':2};
+  return [...orders].sort((a, b) => {
+    const ra = getDeliveryRisk(a), rb = getDeliveryRisk(b);
+    if (riskWeight[ra] !== riskWeight[rb]) return riskWeight[ra] - riskWeight[rb];
+    const pa = periodWeight[a.scheduledPeriod] ?? 99;
+    const pb = periodWeight[b.scheduledPeriod] ?? 99;
+    if (pa !== pb) return pa - pb;
+    const ta = a.scheduledTime || '99:99', tb = b.scheduledTime || '99:99';
+    return ta.localeCompare(tb);
+  });
+}
+
+function playAlert() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = 880; gain.gain.value = 0.3;
+    osc.start(); osc.stop(ctx.currentTime + 0.3);
+  } catch(e) {}
+}
+
+// WhatsApp notification on delivery confirmed
+function sendWhatsAppDeliveryConfirm(order) {
+  const tmpl = localStorage.getItem('fv_delivery_msg') ||
+    'Olá, {nome}! 🌸 Seu pedido {pedido} foi entregue com sucesso. Esperamos que tenha amado! 💖 Floricultura Laços Eternos';
+  const clientName = order.client?.name || order.clientName || 'Cliente';
+  const clientPhone = order.client?.phone || order.clientPhone || '';
+  if (!clientPhone) return;
+  const msg = tmpl
+    .replace('{nome}', clientName)
+    .replace('{pedido}', order.orderNumber || '')
+    .replace('{produto}', (order.items||[]).map(i=>i.name).join(', '))
+    .replace('{data}', new Date().toLocaleDateString('pt-BR'))
+    .replace('{floricultura}', 'Laços Eternos');
+  const phone = '55' + clientPhone.replace(/\D/g,'');
+  window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+}
+
 // ── BINDINGS ─────────────────────────────────────────────────
 function bindApp(){
   document.querySelectorAll('.sb-item[data-page]').forEach(el=>el.addEventListener('click',()=>{S.page=el.dataset.page;S.sidebarOpen=false;render();}));
@@ -1291,6 +1988,72 @@ function bindApp(){
 function bindPageActions(){
   // PDV
   if(S.page==='pdv'){
+    // Client phone search — debounced, no full render
+    let _searchTimeout = null;
+    document.getElementById('pdv-phone-search')?.addEventListener('input',e=>{
+      PDV.clientSearch=e.target.value;
+      clearTimeout(_searchTimeout);
+      _searchTimeout = setTimeout(()=>render(), 200);
+    });
+    document.getElementById('pdv-clear-cli')?.addEventListener('click',()=>{PDV.clientId='';PDV.clientName='';PDV.clientPhone='';PDV.clientSearch='';render();});
+    document.getElementById('pdv-new-cli-btn')?.addEventListener('click',()=>{PDV._showQuickReg=true;render();});
+    document.getElementById('btn-qr-cancel')?.addEventListener('click',()=>{PDV._showQuickReg=false;render();});
+    document.getElementById('btn-qr-save')?.addEventListener('click',async()=>{
+      const name=document.getElementById('qr-name')?.value.trim();
+      const phone=document.getElementById('qr-phone')?.value.trim();
+      if(!name) return toast('❌ Nome completo é obrigatório');
+      if(!phone) return toast('❌ WhatsApp é obrigatório');
+      try{
+        const validUnits=['Loja Novo Aleixo','Loja Allegro Mall','CDLE'];
+        const cUnit=validUnits.includes(S.user.unit)?S.user.unit:'Loja Novo Aleixo';
+        const qrCode='CLI-'+String(S.clients.length+1).padStart(3,'0');
+        const c=await POST('/clients',{
+          code:qrCode, name, phone,
+          email:document.getElementById('qr-email')?.value||'',
+          birthday:document.getElementById('qr-bday')?.value||undefined,
+          cpf:document.getElementById('qr-cpf')?.value||'',
+          segment:document.getElementById('qr-segment')?.value||'Novo',
+          notes:document.getElementById('qr-notes')?.value||'',
+          address:{
+            street:document.getElementById('qr-street')?.value||'',
+            number:document.getElementById('qr-number')?.value||'',
+            neighborhood:document.getElementById('qr-neigh')?.value||'',
+            city:document.getElementById('qr-city')?.value||'Manaus',
+            cep:document.getElementById('qr-cep')?.value||'',
+          },
+          unit:cUnit
+        });
+        S.clients.unshift(c);
+        PDV.clientId=c._id;PDV.clientName=c.name;PDV.clientPhone=c.phone;
+        // Auto preenche endereço de entrega
+        if(document.getElementById('qr-street')?.value){
+          PDV.street=document.getElementById('qr-street')?.value||'';
+          PDV.number=document.getElementById('qr-number')?.value||'';
+          PDV.neighborhood=document.getElementById('qr-neigh')?.value||'';
+          PDV.city=document.getElementById('qr-city')?.value||'Manaus';
+        }
+        PDV.clientSearch='';PDV._showQuickReg=false;
+        render();toast('✅ Cliente '+name+' cadastrado!');
+      }catch(e){toast('❌ Erro ao cadastrar cliente');}
+    });
+    document.querySelectorAll('[data-cli-pick]').forEach(el=>el.addEventListener('click',()=>{
+      const c=S.clients.find(x=>x._id===el.dataset.cliPick);
+      if(c){PDV.clientId=c._id;PDV.clientName=c.name;PDV.clientPhone=c.phone;PDV.clientSearch='';
+      // Auto-fill address if available
+      if(c.address?.street){PDV.street=c.address.street||'';PDV.number=c.address.number||'';PDV.neighborhood=c.address.neighborhood||'';}
+      render();}
+    }));
+    // Delivery fee
+    document.getElementById('pdv-city-sel')?.addEventListener('change',e=>{
+      PDV.city=e.target.value;PDV.zone='';PDV.deliveryFee=0;render();
+    });
+    document.getElementById('pdv-zone-sel')?.addEventListener('change',e=>{
+      PDV.zone=e.target.value;
+      if(PDV.city&&e.target.value&&DELIVERY_FEES[PDV.city]){
+        PDV.deliveryFee=DELIVERY_FEES[PDV.city][e.target.value]||0;
+      }
+      render();
+    });
     document.getElementById('pdv-search')?.addEventListener('input',e=>{S._prodSearch=e.target.value;render();});
     document.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click',()=>{S._prodCat=b.dataset.cat;render();}));
     document.querySelectorAll('[data-pid]').forEach(c=>c.addEventListener('click',()=>{
@@ -1304,9 +2067,14 @@ function bindPageActions(){
     document.querySelectorAll('[data-inc]').forEach(b=>b.addEventListener('click',()=>{const id=b.dataset.inc;PDV.cart=PDV.cart.map(i=>i.id===id?{...i,qty:i.qty+1}:i);render();}));
     document.querySelectorAll('[data-type]').forEach(b=>b.addEventListener('click',()=>{PDV.type=b.dataset.type;render();}));
     document.getElementById('pdv-condo')?.addEventListener('change',e=>{PDV.isCondominium=e.target.checked;render();});
+    document.getElementById('pdv-sale-unit')?.addEventListener('change',e=>{PDV.saleUnit=e.target.value;});
+    document.getElementById('pdv-sale-unit')?.addEventListener('change',e=>{PDV.saleUnit=e.target.value;});
+    document.getElementById('pdv-notify')?.addEventListener('change',e=>{PDV.notifyClient=e.target.checked;});
+    document.getElementById('pdv-identify')?.addEventListener('change',e=>{PDV.identifyClient=e.target.checked;});
+    document.getElementById('pdv-pickup-unit')?.addEventListener('change',e=>{PDV.pickupUnit=e.target.value;});
     ['pdv-client','pdv-cname','pdv-cphone','pdv-recipient','pdv-cardmsg','pdv-notes','pdv-date','pdv-period','pdv-time','pdv-street','pdv-number','pdv-neighborhood','pdv-city','pdv-cep','pdv-ref','pdv-block','pdv-apt','pdv-disc','pdv-pay'].forEach(id=>{
       const el=document.getElementById(id);if(!el)return;
-      const map={'pdv-client':'clientId','pdv-cname':'clientName','pdv-cphone':'clientPhone','pdv-recipient':'recipient','pdv-cardmsg':'cardMessage','pdv-notes':'notes','pdv-date':'deliveryDate','pdv-period':'deliveryPeriod','pdv-time':'deliveryTime','pdv-street':'street','pdv-number':'number','pdv-neighborhood':'neighborhood','pdv-city':'city','pdv-cep':'cep','pdv-ref':'reference','pdv-block':'block','pdv-apt':'apt','pdv-disc':'discount','pdv-pay':'payment'};
+      const map={'pdv-client':'clientId','pdv-cname':'clientName','pdv-cphone':'clientPhone','pdv-recipient':'recipient','pdv-cardmsg':'cardMessage','pdv-notes':'notes','pdv-date':'deliveryDate','pdv-period':'deliveryPeriod','pdv-time':'deliveryTime','pdv-street':'street','pdv-number':'number','pdv-neighborhood':'neighborhood','pdv-city':'city','pdv-cep':'cep','pdv-ref':'reference','pdv-block':'block','pdv-apt':'apt','pdv-disc':'discount','pdv-pay':'payment','pdv-pickup-unit':'pickupUnit'};
       const key=map[id];
       el.addEventListener('change',e=>{PDV[key]=key==='discount'?parseFloat(e.target.value)||0:e.target.value;if(key==='deliveryPeriod')render();});
       el.addEventListener('input',e=>{PDV[key]=key==='discount'?parseFloat(e.target.value)||0:e.target.value;});
@@ -1342,6 +2110,14 @@ function bindPageActions(){
   // Expedição
   if(S.page==='expedicao'){
     document.querySelectorAll('[data-exp]').forEach(b=>b.addEventListener('click',()=>advanceOrder(b.dataset.exp)));
+    document.getElementById('btn-rel-orders')?.addEventListener('click',async()=>{S.loading=true;render();S.orders=await GET('/orders');S.loading=false;render();});
+    document.getElementById('btn-save-msg')?.addEventListener('click',()=>{
+      const msg=document.getElementById('delivery-msg-template')?.value;
+      if(msg){localStorage.setItem('fv_delivery_msg',msg);toast('✅ Mensagem salva!');}
+    });
+    document.getElementById('btn-sort-priority')?.addEventListener('click',()=>{render();});
+    document.getElementById('btn-sort-time')?.addEventListener('click',()=>{toast('Ordenado por horário ✅');render();});
+    document.getElementById('btn-sort-region')?.addEventListener('click',()=>{toast('Ordenado por região ✅');render();});
   }
   // Entregador
   if(S.page==='entregador'){
@@ -1355,8 +2131,33 @@ function bindPageActions(){
   }
   // Config
   if(S.page==='config'){
+    document.getElementById('btn-save-fees')?.addEventListener('click',()=>{
+      document.querySelectorAll('.fee-input').forEach(inp=>{
+        const city=inp.dataset.feeCity,zone=inp.dataset.feeZone,val=parseFloat(inp.value)||0;
+        if(city&&zone&&DELIVERY_FEES[city])DELIVERY_FEES[city][zone]=val;
+      });
+      saveDeliveryFees();toast('✅ Taxas salvas!');
+    });
+    document.getElementById('btn-add-zone')?.addEventListener('click',()=>{
+      const zone=prompt('Nome da nova zona/bairro:');
+      const fee=parseFloat(prompt('Taxa de entrega (R$):')||'0');
+      if(zone){
+        if(!DELIVERY_FEES['Manaus'])DELIVERY_FEES['Manaus']={};
+        DELIVERY_FEES['Manaus'][zone]=fee;
+        saveDeliveryFees();render();toast('✅ Zona adicionada!');
+      }
+    });
     document.getElementById('btn-test-api')?.addEventListener('click',async()=>{try{const r=await fetch('https://florevita-backend.onrender.com/api/health');const d=await r.json();toast(d.db==='conectado'?'✅ Conectado!':'❌ Problema na conexão');}catch(e){toast('❌ API offline');}});
     document.getElementById('btn-sug')?.addEventListener('click',()=>{toast('💡 Sugestão enviada!');document.getElementById('sug-txt').value='';});
+    // Notif template
+    document.getElementById('notif-template')?.addEventListener('input',e=>{
+      const preview=document.getElementById('notif-preview');
+      if(preview) preview.textContent=e.target.value.replace(/{nome}/gi,'Maria').replace(/{produto}/gi,'Buquê Premium').replace(/{data}/gi,new Date().toLocaleDateString('pt-BR')).replace(/{floricultura}/gi,'Laços Eternos');
+    });
+    document.getElementById('btn-save-notif')?.addEventListener('click',()=>{
+      const t=document.getElementById('notif-template')?.value;
+      if(t){localStorage.setItem('fv_notif_cfg',JSON.stringify({template:t}));toast('✅ Mensagem salva!');}
+    });
   }
   // Estoque
   if(S.page==='estoque'){
@@ -1369,8 +2170,31 @@ function bindPageActions(){
   }
   // Usuários
   if(S.page==='usuarios'){
-    document.getElementById('btn-new-user')?.addEventListener('click',()=>toast('Em breve: cadastro de novo usuário'));
+    document.getElementById('btn-new-user')?.addEventListener('click',()=>showNewUserModal());
+    document.getElementById('user-search')?.addEventListener('input',e=>{S._userSearch=e.target.value;render();});
+    document.getElementById('btn-rel-users')?.addEventListener('click',async()=>{
+      S.loading=true;render();
+      S.users=await GET('/users').catch(()=>[]);
+      S.loading=false;render();
+    });
+    document.querySelectorAll('[data-edit-user]').forEach(b=>b.addEventListener('click',()=>{
+      const u=S.users.find(x=>x._id===b.dataset.editUser);
+      if(u)showNewUserModal(u);
+    }));
+    document.querySelectorAll('[data-toggle-user]').forEach(b=>b.addEventListener('click',()=>{
+      toggleUserActive(b.dataset.toggleUser, b.dataset.active==='true');
+    }));
   }
+}
+
+// ── FULL IMG ─────────────────────────────────────────────────
+function showFullImg(url){
+  S._modal=`<div class="mo" id="mo" onclick="S._modal='';render()">
+  <div style="background:#fff;border-radius:16px;padding:16px;max-width:500px;width:94%;text-align:center">
+    <img src="${url}" style="max-width:100%;max-height:70vh;object-fit:contain;border-radius:8px;"/>
+    <div style="margin-top:10px"><button class="btn btn-ghost" onclick="S._modal=\'\';render()">Fechar</button></div>
+  </div></div>`;
+  render();
 }
 
 // ── INIT ─────────────────────────────────────────────────────
