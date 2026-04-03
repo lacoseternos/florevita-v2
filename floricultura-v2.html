@@ -373,6 +373,7 @@ function renderApp(){
     {k:'alertas',l:'Alertas',i:'🔔',m:'dashboard',s:'Sistema'},
     {k:'ia',l:'IA Assistente',i:'🤖',m:'dashboard',s:'Sistema'},
     {k:'usuarios',l:'Usuários',i:'👩‍💼',m:'users',s:'Config'},
+    {k:'impressao',l:'Impressão',i:'🖨️',m:'dashboard',s:'Config'},
     {k:'config',l:'Configurações',i:'⚙️',m:'dashboard',s:'Config'},
   ].filter(n=>can(n.m));
 
@@ -383,9 +384,9 @@ function renderApp(){
     return `${sh}<div class="sb-item ${S.page===n.k?'active':''}" data-page="${n.k}"><span class="sb-icon">${n.i}</span>${n.l}</div>`;
   }).join('');
 
-  const pages={dashboard:renderDashboard,pdv:renderPDV,pedidos:renderPedidos,clientes:renderClientes,produtos:renderProdutos,estoque:renderEstoque,producao:renderProducao,expedicao:renderExpedicao,entregador:renderEntregador,financeiro:renderFinanceiro,comissoes:renderComissoes,relatorios:renderRelatorios,alertas:renderAlertas,ia:renderIA,usuarios:renderUsuarios,config:renderConfig};
+  const pages={dashboard:renderDashboard,pdv:renderPDV,pedidos:renderPedidos,clientes:renderClientes,produtos:renderProdutos,estoque:renderEstoque,producao:renderProducao,expedicao:renderExpedicao,entregador:renderEntregador,financeiro:renderFinanceiro,comissoes:renderComissoes,relatorios:renderRelatorios,alertas:renderAlertas,ia:renderIA,usuarios:renderUsuarios,impressao:renderImpressao,config:renderConfig};
   const content = pages[S.page]?pages[S.page]():`<div class="empty card"><div class="empty-icon">🌸</div><p>Em desenvolvimento</p></div>`;
-  const titles={dashboard:'Dashboard',pdv:'PDV — Ponto de Venda',pedidos:'Pedidos',clientes:'Clientes',produtos:'Produtos',estoque:'Estoque',producao:'Produção & Montagem',expedicao:'Expedição',entregador:'App Entregador',financeiro:'Financeiro',comissoes:'Comissões & Metas',relatorios:'Relatórios',alertas:'Alertas',ia:'IA Assistente',usuarios:'Usuários',config:'Configurações'};
+  const titles={dashboard:'Dashboard',impressao:'Módulo de Impressão',pdv:'PDV — Ponto de Venda',pedidos:'Pedidos',clientes:'Clientes',produtos:'Produtos',estoque:'Estoque',producao:'Produção & Montagem',expedicao:'Expedição',entregador:'App Entregador',financeiro:'Financeiro',comissoes:'Comissões & Metas',relatorios:'Relatórios',alertas:'Alertas',ia:'IA Assistente',usuarios:'Usuários',config:'Configurações'};
 
   const pendingAlerts = 3;
   const newOrders = S.orders.filter(o=>o.status==='Aguardando').length;
@@ -1637,20 +1638,20 @@ function printCard(orderId){
   const o = S.orders.find(x=>x._id===orderId);
   if(!o) return;
   const cfg = JSON.parse(localStorage.getItem('fv_config')||'{}');
-  const layout = JSON.parse(localStorage.getItem('fv_card_layout')||'{"cor":"#C8436A","fonte":"Georgia","tamanho":"16"}');
+  const layout = JSON.parse(localStorage.getItem('fv_print_layout')||'{"cardCor":"#C8436A","cardFonte":"Georgia","cardTamanho":"16","cardMostrarLogo":true,"cardMostrarRemetente":true,"nomeEmpresa":"Laços Eternos"}');
   
   const html = `<!DOCTYPE html>
 <html><head><title>Cartão — ${o.orderNumber}</title>
 <meta charset="utf-8"/>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;}
-  body{font-family:'${layout.fonte||'Georgia'}',serif;background:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;}
-  .card{border:2px solid ${layout.cor||'#C8436A'};border-radius:16px;padding:32px;max-width:360px;width:100%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.1);}
+  body{font-family:'${layout.cardFonte||'Georgia'}',serif;background:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;}
+  .card{border:2px solid ${layout.cardCor||'#C8436A'};border-radius:16px;padding:32px;max-width:360px;width:100%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.1);}
   .flor{font-size:36px;margin-bottom:12px;}
   .logo{font-size:16px;color:${layout.cor||'#C8436A'};font-weight:bold;margin-bottom:20px;letter-spacing:1px;}
   .para{font-size:13px;color:#666;margin-bottom:6px;}
   .dest{font-size:18px;font-weight:bold;color:#1A0A10;margin-bottom:20px;}
-  .msg{font-size:${layout.tamanho||'16'}px;line-height:1.8;color:#2D1A20;font-style:italic;margin-bottom:20px;padding:16px;background:#FDF4F7;border-radius:8px;}
+  .msg{font-size:${layout.cardTamanho||'16'}px;line-height:1.8;color:#2D1A20;font-style:italic;margin-bottom:20px;padding:16px;background:#FDF4F7;border-radius:8px;}
   .de{font-size:13px;color:#9E8090;margin-top:16px;}
   .btn{display:block;margin:20px auto 0;background:${layout.cor||'#C8436A'};color:#fff;border:none;padding:10px 28px;border-radius:8px;font-size:14px;cursor:pointer;}
   @media print{.btn{display:none!important}body{min-height:auto}}
@@ -1667,10 +1668,24 @@ function printCard(orderId){
 <button class="btn" onclick="window.print()">🖨️ Imprimir Cartão</button>
 </body></html>`;
 
-  // Mostra numa modal para imprimir
-  showPrintModal(html, 'Cartão — '+o.orderNumber);
+  // Abre em nova janela para impressão
+  const w = window.open('', '_blank');
+  if(w){
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.onload = ()=>{ setTimeout(()=>w.print(), 300); };
+  } else {
+    // Fallback: download como HTML
+    const a = document.createElement('a');
+    a.href = 'data:text/html;charset=utf-8,'+encodeURIComponent(html);
+    a.download = 'cartao-'+o.orderNumber+'.html';
+    a.click();
+    toast('📥 Cartão salvo — abra o arquivo para imprimir');
+  }
   S._printedCard = {...(S._printedCard||{}), [orderId]:true};
   render();
+  toast('✅ Cartão aberto!');
 }
 
 function printComanda(orderId){
@@ -1760,10 +1775,24 @@ ${o.notes?`<div class="obs">📝 <strong>Obs:</strong> ${o.notes}</div>`:''}
 <button class="btn" onclick="window.print()">🖨️ Imprimir Comanda</button>
 </body></html>`;
 
-  // Mostra numa modal para imprimir
-  showPrintModal(html, 'Comanda — '+o.orderNumber);
+  // Abre em nova janela para impressão
+  const w = window.open('', '_blank');
+  if(w){
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.onload = ()=>{ setTimeout(()=>w.print(), 300); };
+  } else {
+    // Fallback: download como HTML
+    const a = document.createElement('a');
+    a.href = 'data:text/html;charset=utf-8,'+encodeURIComponent(html);
+    a.download = 'comanda-'+o.orderNumber+'.html';
+    a.click();
+    toast('📥 Comanda salva — abra o arquivo para imprimir');
+  }
   S._printedComanda = {...(S._printedComanda||{}), [orderId]:true};
   render();
+  toast('✅ Comanda aberta!');
 }
 
 // ── PRINT MODAL ─────────────────────────────────────────────
@@ -2077,6 +2106,123 @@ function renderUsuarios(){
   </tr>`).join('')}
   </tbody></table></div>`}
 </div>`;}
+function renderImpressao(){
+  const cfg = JSON.parse(localStorage.getItem('fv_config')||'{}');
+  const layout = JSON.parse(localStorage.getItem('fv_print_layout')||JSON.stringify({
+    cardCor: '#C8436A',
+    cardFonte: 'Georgia',
+    cardTamanho: '16',
+    cardMostrarLogo: true,
+    cardMostrarRemetente: true,
+    comandaCor: '#C8436A',
+    comandaMostrarFoto: true,
+    comandaMostrarCartao: true,
+    comandaMostrarObs: true,
+    nomeEmpresa: 'Laços Eternos Floricultura',
+    whatsapp: '(92) 99300-2433',
+  }));
+
+  // Preview order (last order or fake)
+  const previewOrder = S.orders[0] || {
+    orderNumber:'#0001', recipient:'Maria Silva',
+    cardMessage:'Feliz aniversário com muito amor! 🌸',
+    identifyClient:true, clientName:'João Silva',
+    client:{name:'João Silva'}, clientPhone:'(92) 98888-0000',
+    deliveryAddress:'Rua das Flores, 123 — Adrianópolis',
+    scheduledDate:new Date().toISOString(),
+    scheduledPeriod:'Tarde', payment:'Pix', total:150,
+    items:[{name:'Buquê Premium',qty:1,totalPrice:150}]
+  };
+
+  return`
+<div class="g2">
+
+  <!-- CONFIGURAÇÕES -->
+  <div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">💌 Layout do Cartão</div>
+      <div class="fr2">
+        <div class="fg"><label class="fl">Cor Principal</label>
+          <input type="color" id="lp-card-cor" value="${layout.cardCor}" style="width:100%;height:38px;border:1px solid var(--border);border-radius:8px;padding:2px;cursor:pointer;"/>
+        </div>
+        <div class="fg"><label class="fl">Fonte</label>
+          <select class="fi" id="lp-card-fonte">
+            ${['Georgia','Arial','Palatino Linotype','Times New Roman','Garamond','Verdana'].map(f=>`<option value="${f}" ${layout.cardFonte===f?'selected':''}>${f}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fg"><label class="fl">Tamanho da Mensagem</label>
+          <select class="fi" id="lp-card-tam">
+            ${['12','13','14','15','16','18','20'].map(s=>`<option value="${s}" ${layout.cardTamanho===s?'selected':''}>${s}px</option>`).join('')}
+          </select>
+        </div>
+        <div class="fg"><label class="fl">Opções</label>
+          <label class="cb"><input type="checkbox" id="lp-card-logo" ${layout.cardMostrarLogo?'checked':''}/><span style="font-size:12px">Mostrar nome da empresa</span></label>
+          <label class="cb" style="margin-top:6px"><input type="checkbox" id="lp-card-rem" ${layout.cardMostrarRemetente?'checked':''}/><span style="font-size:12px">Mostrar remetente</span></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">🧾 Layout da Comanda</div>
+      <div class="fr2">
+        <div class="fg"><label class="fl">Cor da Comanda</label>
+          <input type="color" id="lp-com-cor" value="${layout.comandaCor}" style="width:100%;height:38px;border:1px solid var(--border);border-radius:8px;padding:2px;cursor:pointer;"/>
+        </div>
+        <div class="fg"><label class="fl">Nome da Empresa</label>
+          <input class="fi" id="lp-nome-emp" value="${layout.nomeEmpresa||cfg.razao||'Laços Eternos'}" placeholder="Nome da empresa"/>
+        </div>
+        <div class="fg"><label class="fl">WhatsApp Rodapé</label>
+          <input class="fi" id="lp-whats" value="${layout.whatsapp||cfg.whats||''}" placeholder="(92) 99300-2433"/>
+        </div>
+        <div class="fg"><label class="fl">Opções</label>
+          <label class="cb"><input type="checkbox" id="lp-com-foto" ${layout.comandaMostrarFoto?'checked':''}/><span style="font-size:12px">Mostrar fotos dos produtos</span></label>
+          <label class="cb" style="margin-top:6px"><input type="checkbox" id="lp-com-cartao" ${layout.comandaMostrarCartao?'checked':''}/><span style="font-size:12px">Mostrar mensagem do cartão</span></label>
+          <label class="cb" style="margin-top:6px"><input type="checkbox" id="lp-com-obs" ${layout.comandaMostrarObs?'checked':''}/><span style="font-size:12px">Mostrar observações</span></label>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-primary" id="btn-save-print-layout">💾 Salvar Configurações</button>
+      <button class="btn btn-outline" id="btn-preview-card-imp">👁️ Pré-visualizar Cartão</button>
+      <button class="btn btn-outline" id="btn-preview-comanda-imp">👁️ Pré-visualizar Comanda</button>
+    </div>
+  </div>
+
+  <!-- PRÉVIA -->
+  <div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-title">👁️ Prévia do Cartão</div>
+      <div style="border:2px solid ${layout.cardCor};border-radius:12px;padding:24px;text-align:center;font-family:${layout.cardFonte},serif;background:#fff;">
+        ${layout.cardMostrarLogo?`<div style="font-size:14px;color:${layout.cardCor};font-weight:bold;margin-bottom:12px">🌺 ${layout.nomeEmpresa||cfg.razao||'Laços Eternos'}</div>`:''}
+        <div style="font-size:12px;color:#666;margin-bottom:4px">Para:</div>
+        <div style="font-size:16px;font-weight:bold;margin-bottom:16px">${previewOrder.recipient||'Maria Silva'}</div>
+        <div style="font-size:${layout.cardTamanho}px;font-style:italic;color:#2D1A20;line-height:1.8;padding:12px;background:#FDF4F7;border-radius:8px;margin-bottom:12px">"${previewOrder.cardMessage||'Com muito carinho e amor! 🌸'}"</div>
+        ${layout.cardMostrarRemetente&&previewOrder.identifyClient?`<div style="font-size:12px;color:#9E8090">💌 Com carinho de: <strong>${previewOrder.client?.name||previewOrder.clientName||'—'}</strong></div>`:''}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🖨️ Testar Impressão</div>
+      <div class="alert al-info">Use os botões abaixo para testar a impressão com o último pedido cadastrado.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        <button class="btn btn-primary" id="btn-test-print-card">🖨️ Imprimir Cartão Teste</button>
+        <button class="btn btn-primary" id="btn-test-print-comanda">🖨️ Imprimir Comanda Teste</button>
+      </div>
+      <hr/>
+      <div class="card-title" style="font-size:13px;margin-top:4px">💡 Dica de Impressão</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.6;">
+        • Ao clicar imprimir, uma janela de impressão abrirá<br>
+        • Escolha a impressora desejada ou <strong>Salvar como PDF</strong><br>
+        • Para impressão sem margens: desabilite cabeçalhos/rodapés no navegador<br>
+        • Tamanho recomendado para cartão: <strong>A6 ou 10x15cm</strong><br>
+        • Tamanho recomendado para comanda: <strong>A5 ou A4</strong>
+      </div>
+    </div>
+  </div>
+</div>`;
+}
+
 function renderConfig(){
   const cfg = JSON.parse(localStorage.getItem('fv_config')||'{}');
   return`
@@ -2863,6 +3009,52 @@ function bindPageActions(){
     setTimeout(()=>{const el=document.getElementById('chat-wrap');if(el)el.scrollTop=el.scrollHeight;},100);
   }
   // Config
+  if(S.page==='impressao'){
+    const saveLayout = () => {
+      const layout = {
+        cardCor: document.getElementById('lp-card-cor')?.value||'#C8436A',
+        cardFonte: document.getElementById('lp-card-fonte')?.value||'Georgia',
+        cardTamanho: document.getElementById('lp-card-tam')?.value||'16',
+        cardMostrarLogo: document.getElementById('lp-card-logo')?.checked!==false,
+        cardMostrarRemetente: document.getElementById('lp-card-rem')?.checked!==false,
+        comandaCor: document.getElementById('lp-com-cor')?.value||'#C8436A',
+        comandaMostrarFoto: document.getElementById('lp-com-foto')?.checked!==false,
+        comandaMostrarCartao: document.getElementById('lp-com-cartao')?.checked!==false,
+        comandaMostrarObs: document.getElementById('lp-com-obs')?.checked!==false,
+        nomeEmpresa: document.getElementById('lp-nome-emp')?.value||'Laços Eternos',
+        whatsapp: document.getElementById('lp-whats')?.value||'',
+      };
+      localStorage.setItem('fv_print_layout', JSON.stringify(layout));
+      return layout;
+    };
+    document.getElementById('btn-save-print-layout')?.addEventListener('click',()=>{
+      saveLayout(); toast('✅ Layout salvo!'); render();
+    });
+    // Live preview on color change
+    ['lp-card-cor','lp-card-fonte','lp-card-tam','lp-card-logo','lp-card-rem'].forEach(id=>{
+      document.getElementById(id)?.addEventListener('change',()=>render());
+    });
+    document.getElementById('btn-preview-card-imp')?.addEventListener('click',()=>{
+      const o = S.orders[0];
+      if(o) printCard(o._id);
+      else toast('❌ Nenhum pedido para visualizar');
+    });
+    document.getElementById('btn-preview-comanda-imp')?.addEventListener('click',()=>{
+      const o = S.orders[0];
+      if(o) printComanda(o._id);
+      else toast('❌ Nenhum pedido para visualizar');
+    });
+    document.getElementById('btn-test-print-card')?.addEventListener('click',()=>{
+      const o = S.orders[0];
+      if(o) printCard(o._id);
+      else toast('❌ Cadastre um pedido primeiro');
+    });
+    document.getElementById('btn-test-print-comanda')?.addEventListener('click',()=>{
+      const o = S.orders[0];
+      if(o) printComanda(o._id);
+      else toast('❌ Cadastre um pedido primeiro');
+    });
+  }
   if(S.page==='config'){
     document.getElementById('btn-save-fees')?.addEventListener('click',()=>{
       document.querySelectorAll('.fee-input').forEach(inp=>{
