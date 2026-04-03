@@ -1667,17 +1667,22 @@ function printCard(orderId){
 <button class="btn" onclick="window.print()">🖨️ Imprimir Cartão</button>
 </body></html>`;
 
-  const blob = new Blob([html], {type:'text/html'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.target = '_blank';
-  a.click();
-  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  // Usa iframe oculto para imprimir sem popup
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;';
+  document.body.appendChild(iframe);
+  iframe.contentDocument.open();
+  iframe.contentDocument.write(html);
+  iframe.contentDocument.close();
+  setTimeout(()=>{
+    iframe.contentWindow.focus();
+    iframe.contentWindow.print();
+    setTimeout(()=>document.body.removeChild(iframe), 2000);
+  }, 500);
   
   S._printedCard = {...(S._printedCard||{}), [orderId]:true};
   render();
-  toast('✅ Cartão aberto para impressão!');
+  toast('✅ Enviando para impressão...');
 }
 
 function printComanda(orderId){
@@ -1767,17 +1772,22 @@ ${o.notes?`<div class="obs">📝 <strong>Obs:</strong> ${o.notes}</div>`:''}
 <button class="btn" onclick="window.print()">🖨️ Imprimir Comanda</button>
 </body></html>`;
 
-  const blob = new Blob([html], {type:'text/html'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.target = '_blank';
-  a.click();
-  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  // Usa iframe oculto para imprimir sem popup
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;';
+  document.body.appendChild(iframe);
+  iframe.contentDocument.open();
+  iframe.contentDocument.write(html);
+  iframe.contentDocument.close();
+  setTimeout(()=>{
+    iframe.contentWindow.focus();
+    iframe.contentWindow.print();
+    setTimeout(()=>document.body.removeChild(iframe), 2000);
+  }, 500);
 
   S._printedComanda = {...(S._printedComanda||{}), [orderId]:true};
   render();
-  toast('✅ Comanda aberta para impressão!');
+  toast('✅ Enviando comanda para impressão...');
 }
 
 // ── ESTOQUE MODALS ───────────────────────────────────────────
