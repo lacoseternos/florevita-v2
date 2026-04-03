@@ -234,7 +234,7 @@ let S = {
   clients:[], products:[], orders:[], users:[], _userSearch:'',
   stockMoves:[], _stockFilter:'todos', _stockUnit:'',
   _prodDate:'', _prodShift:'Todos', _expDate:'',
-  _printedCard:{}, _printedComanda:{}, _expDate:'',
+  _printedCard:JSON.parse(localStorage.getItem('fv_printed_card')||'{}'), _printedComanda:JSON.parse(localStorage.getItem('fv_printed_comanda')||'{}'), _expDate:'',
   financialEntries:[], _relPeriod:'mes', _relUnit:'', _finUnit:'', _iaLoading:false,
   _userSearch:'',
   loading:false, toast:null, sidebarOpen:false,
@@ -756,8 +756,13 @@ function renderPedidos(){
     <td style="font-size:11px;color:var(--muted)">${o.scheduledDate?$d(o.scheduledDate)+' '+( o.scheduledPeriod||''):'—'}</td>
     <td><span class="tag ${sc(o.status)}">${o.status}</span></td>
     <td style="display:flex;gap:4px;">
-      <button class="btn btn-ghost btn-xs" data-adv="${o._id}">▶</button>
-      <button class="btn btn-ghost btn-xs" data-edit-order="${o._id}">✏️</button>
+      <button class="btn btn-ghost btn-xs" data-adv="${o._id}" title="Avançar status">▶</button>
+      <button class="btn btn-ghost btn-xs" data-edit-order="${o._id}" title="Editar pedido">✏️</button>
+      <button class="btn btn-xs" 
+        data-print-comanda-ped="${o._id}"
+        title="${S._printedComanda?.[o._id]?'Comanda já impressa — clique para reimprimir':'Imprimir comanda'}"
+        style="background:${S._printedComanda?.[o._id]?'var(--leaf)':'var(--cream)'};color:${S._printedComanda?.[o._id]?'#fff':'var(--muted)'};border:1px solid ${S._printedComanda?.[o._id]?'var(--leaf)':'var(--border)'};border-radius:6px;padding:3px 6px;cursor:pointer;font-size:13px;transition:all .2s;"
+      >🖨️</button>
     </td>
   </tr>`).join('')}</tbody></table></div>`}
 </div>`;
@@ -1684,6 +1689,7 @@ function printCard(orderId){
     toast('📥 Cartão salvo — abra o arquivo para imprimir');
   }
   S._printedCard = {...(S._printedCard||{}), [orderId]:true};
+  localStorage.setItem('fv_printed_card', JSON.stringify(S._printedCard));
   render();
   toast('✅ Cartão aberto!');
 }
@@ -1692,105 +1698,144 @@ function printComanda(orderId){
   const o = S.orders.find(x=>x._id===orderId);
   if(!o) return;
   const cfg = JSON.parse(localStorage.getItem('fv_config')||'{}');
-  
-  // Build items with photos (using img tags with crossorigin)
+  const layout = JSON.parse(localStorage.getItem('fv_print_layout')||'{}');
+  const cor = layout.comandaCor||'#C8436A';
+  const empresa = layout.nomeEmpresa||cfg.razao||'Laços Eternos Floricultura';
+  const whats = layout.whatsapp||cfg.whats||'(92) 99300-2433';
+
+  // Build items HTML with photos
   const itemsHtml = (o.items||[]).map(i=>{
     const prod = S.products.find(p=>p._id===i.product||p.name===i.name);
-    const imgHtml = prod?.images?.[0] 
-      ? `<img src="${prod.images[0]}" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid #ddd;flex-shrink:0"/>`
-      : `<div style="width:60px;height:60px;border-radius:6px;background:#F5D6E0;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">🌸</div>`;
-    return `<div style="display:flex;align-items:center;gap:12px;padding:8px;background:#f9f9f9;border-radius:6px;margin-bottom:6px;">
-      ${imgHtml}
+    const imgTag = prod?.images?.[0]
+      ? `<img src="${prod.images[0]}" style="width:80px;height:80px;object-fit:cover;border-radius:8px;border:2px solid ${cor};"/>`
+      : `<div style="width:80px;height:80px;border-radius:8px;background:#F5D6E0;display:flex;align-items:center;justify-content:center;font-size:32px;">🌸</div>`;
+    return `<div style="display:flex;align-items:center;gap:12px;padding:10px;background:#f9f9f9;border-radius:8px;margin-bottom:8px;">
+      ${imgTag}
       <div>
-        <div style="font-weight:bold;font-size:13px">${i.qty}x ${i.name}</div>
-        <div style="font-size:12px;color:#666">R$ ${(i.totalPrice||0).toFixed(2).replace('.',',')}</div>
-        ${prod?.productionNotes?`<div style="font-size:11px;color:#999">${prod.productionNotes}</div>`:''}
+        <div style="font-size:15px;font-weight:bold;color:#1A0A10">${i.qty}x ${i.name}</div>
+        ${prod?.productionNotes?`<div style="font-size:12px;color:#666;margin-top:3px">📋 ${prod.productionNotes}</div>`:''}
       </div>
     </div>`;
   }).join('');
+
+  // QR Code data
+  const qrData = encodeURIComponent(JSON.stringify({
+    pedido: o.orderNumber,
+    cliente: o.client?.name||o.clientName||'—',
+    destinatario: o.recipient||'—',
+    endereco: o.deliveryAddress||'—',
+    data: o.scheduledDate?new Date(o.scheduledDate).toLocaleDateString('pt-BR'):'—',
+  }));
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${qrData}`;
+
+  // Single comanda block (will be duplicated)
+  const comandaBlock = (tipo) => `
+  <div style="padding:20px;font-family:Arial,sans-serif;font-size:13px;color:#1A0A10;box-sizing:border-box;width:100%;">
+    
+    <!-- HEADER -->
+    <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid ${cor};padding-bottom:12px;margin-bottom:14px;">
+      <div>
+        <div style="font-size:18px;font-weight:bold;color:${cor}">🌺 ${empresa}</div>
+        <div style="font-size:11px;color:#666;margin-top:2px">${whats}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:22px;font-weight:bold;color:${cor}">${o.orderNumber}</div>
+        <div style="background:${tipo==='CD'?'#1E40AF':'#2D6A4F'};color:#fff;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:bold;margin-top:3px;">${tipo==='CD'?'📦 VIA CD — ARQUIVO':'🚚 VIA ENTREGADOR'}</div>
+      </div>
+    </div>
+
+    <!-- PRODUTO(S) COM FOTO -->
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:bold;color:${cor};text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">📦 Produto(s)</div>
+      ${itemsHtml}
+    </div>
+
+    <!-- DADOS DE ENTREGA -->
+    <div style="background:#f5f5f5;border-radius:8px;padding:12px;margin-bottom:12px;">
+      <div style="font-size:11px;font-weight:bold;color:${cor};text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">📍 Dados de Entrega</div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse;">
+        <tr><td style="color:#666;padding:3px 0;width:110px;">Data:</td><td style="font-weight:600">${o.scheduledDate?new Date(o.scheduledDate).toLocaleDateString('pt-BR'):'—'}</td></tr>
+        <tr><td style="color:#666;padding:3px 0;">Turno:</td><td style="font-weight:600">${o.scheduledPeriod||'—'} ${o.scheduledTime||''}</td></tr>
+        <tr><td style="color:#666;padding:3px 0;">Destinatário:</td><td style="font-weight:600">${o.recipient||'—'}</td></tr>
+        <tr><td style="color:#666;padding:3px 0;">Endereço:</td><td style="font-weight:600">${o.deliveryStreet||''} ${o.deliveryNumber||''}</td></tr>
+        ${o.deliveryNeighborhood?`<tr><td style="color:#666;padding:3px 0;">Bairro:</td><td style="font-weight:600">${o.deliveryNeighborhood}</td></tr>`:''}
+        ${o.isCondominium?`<tr><td style="color:#666;padding:3px 0;">Cond.:</td><td style="font-weight:600">Bloco ${o.block} — Ap ${o.apt}</td></tr>`:''}
+        ${o.deliveryReference?`<tr><td style="color:#666;padding:3px 0;">Referência:</td><td style="font-weight:600">${o.deliveryReference}</td></tr>`:''}
+        <tr><td style="color:#666;padding:3px 0;">WhatsApp:</td><td style="font-weight:600">${o.clientPhone||o.client?.phone||'—'}</td></tr>
+        ${o.notes?`<tr><td style="color:#666;padding:3px 0;">Obs:</td><td style="font-weight:600;color:#B7860F">${o.notes}</td></tr>`:''}
+      </table>
+    </div>
+
+    ${o.cardMessage?`
+    <div style="background:#FDF4F7;border-left:4px solid ${cor};padding:10px;border-radius:0 8px 8px 0;margin-bottom:12px;font-style:italic;font-size:12px;">
+      💌 <strong>Cartão:</strong> "${o.cardMessage}"
+      ${o.identifyClient!==false?`<br><span style="color:#9E8090;font-size:11px">De: ${o.client?.name||o.clientName||'—'}</span>`:''}
+    </div>`:''}
+
+    <!-- QR CODE + ASSINATURA (só na via do entregador) -->
+    ${tipo==='Entregador'?`
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:10px;padding-top:10px;border-top:1px dashed #ccc;">
+      <div style="text-align:center;">
+        <img src="${qrUrl}" style="width:100px;height:100px;" onerror="this.style.display='none'"/>
+        <div style="font-size:10px;color:#666;margin-top:4px;">QR — Confirmar Entrega</div>
+      </div>
+      <div style="flex:1;margin-left:20px;">
+        <div style="border-bottom:1px solid #999;height:50px;margin-bottom:6px;"></div>
+        <div style="font-size:11px;color:#666;text-align:center;">Assinatura / Nome de quem recebeu</div>
+        <div style="border-bottom:1px solid #999;height:30px;margin-top:10px;margin-bottom:6px;"></div>
+        <div style="font-size:11px;color:#666;text-align:center;">Data e Hora da Entrega</div>
+      </div>
+    </div>`:`
+    <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #ccc;font-size:11px;color:#666;text-align:center;">
+      Gerado em ${new Date().toLocaleString('pt-BR')} · ${empresa}
+    </div>`}
+  </div>`;
 
   const html = `<!DOCTYPE html>
 <html><head><title>Comanda — ${o.orderNumber}</title>
 <meta charset="utf-8"/>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;}
-  body{font-family:'Arial',sans-serif;padding:20px;max-width:520px;margin:0 auto;font-size:13px;color:#1A0A10;}
-  h2{color:#C8436A;border-bottom:3px solid #C8436A;padding-bottom:10px;margin-bottom:16px;font-size:18px;}
-  .row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #eee;}
-  .label{color:#666;font-size:12px;}
-  .val{font-weight:600;text-align:right;max-width:60%;}
-  .section{margin:14px 0;}
-  .section-title{font-weight:bold;font-size:13px;color:#C8436A;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;}
-  .msg-cartao{background:#FDF4F7;border-left:4px solid #C8436A;padding:12px;border-radius:0 8px 8px 0;font-style:italic;margin:10px 0;}
-  .obs{background:#FFF8E1;border-left:4px solid #B7860F;padding:10px;border-radius:0 8px 8px 0;margin:8px 0;}
-  .total-row{display:flex;justify-content:space-between;padding:10px 0;font-size:18px;font-weight:bold;border-top:2px solid #C8436A;margin-top:10px;}
-  .footer{text-align:center;margin-top:20px;font-size:11px;color:#999;border-top:1px dashed #ddd;padding-top:12px;}
-  .btn{display:block;margin:16px auto 0;background:#C8436A;color:#fff;border:none;padding:10px 28px;border-radius:8px;font-size:14px;cursor:pointer;}
-  @media print{.btn{display:none!important}}
+  body{background:#fff;font-family:Arial,sans-serif;}
+  .page{width:210mm;min-height:297mm;display:flex;flex-direction:column;}
+  .half{height:148.5mm;overflow:hidden;position:relative;}
+  .half:first-child{border-bottom:2px dashed #999;}
+  .divider-label{position:absolute;bottom:-10px;left:50%;transform:translateX(-50%);background:#fff;padding:0 12px;font-size:11px;color:#999;white-space:nowrap;}
+  .btn-print{display:block;margin:20px auto;background:#C8436A;color:#fff;border:none;padding:12px 32px;border-radius:8px;font-size:15px;cursor:pointer;font-family:Arial;}
+  @media print{
+    .btn-print{display:none!important;}
+    body{margin:0;}
+    .page{width:100%;min-height:auto;}
+    .half{height:50vh;}
+  }
 </style></head>
 <body>
-<h2>🚚 Comanda de Entrega — ${o.orderNumber}</h2>
-
-<div class="section">
-  <div class="row"><span class="label">Emissão</span><span class="val">${new Date().toLocaleString('pt-BR')}</span></div>
-  <div class="row"><span class="label">Entrega</span><span class="val">${o.scheduledDate?new Date(o.scheduledDate).toLocaleDateString('pt-BR'):'—'} · ${o.scheduledPeriod||'—'} ${o.scheduledTime||''}</span></div>
-  <div class="row"><span class="label">Tipo</span><span class="val">${o.type||'—'}</span></div>
+<button class="btn-print" onclick="window.print()">🖨️ Imprimir Comanda (A4)</button>
+<div class="page">
+  <div class="half">
+    ${comandaBlock('CD')}
+    <div class="divider-label">✂ ─────────── DESTACAR AQUI ─────────── ✂</div>
+  </div>
+  <div class="half">
+    ${comandaBlock('Entregador')}
+  </div>
 </div>
-
-<div class="section">
-  <div class="section-title">👤 Cliente</div>
-  <div class="row"><span class="label">Nome</span><span class="val">${o.client?.name||o.clientName||'—'}</span></div>
-  <div class="row"><span class="label">WhatsApp</span><span class="val">${o.clientPhone||o.client?.phone||'—'}</span></div>
-</div>
-
-<div class="section">
-  <div class="section-title">📍 Entrega</div>
-  <div class="row"><span class="label">Destinatário</span><span class="val">${o.recipient||'—'}</span></div>
-  <div class="row"><span class="label">Endereço</span><span class="val">${o.deliveryAddress||'Retirada'}</span></div>
-  ${o.isCondominium?`<div class="row"><span class="label">Condomínio</span><span class="val">Bloco ${o.block} · Ap ${o.apt}</span></div>`:''}
-  ${o.deliveryReference?`<div class="row"><span class="label">Referência</span><span class="val">${o.deliveryReference}</span></div>`:''}
-</div>
-
-<div class="section">
-  <div class="section-title">📦 Produtos</div>
-  ${itemsHtml}
-</div>
-
-${o.cardMessage?`<div class="msg-cartao">💌 <strong>Cartão:</strong> "${o.cardMessage}"${o.identifyClient!==false?`<br><small style="color:#9E8090">De: ${o.client?.name||o.clientName||'—'}</small>`:''}</div>`:''}
-${o.notes?`<div class="obs">📝 <strong>Obs:</strong> ${o.notes}</div>`:''}
-
-<div class="section">
-  <div class="row"><span class="label">Pagamento</span><span class="val">${o.payment||'—'}</span></div>
-  ${(o.discount||0)>0?`<div class="row"><span class="label">Desconto</span><span class="val">-R$ ${(o.discount||0).toFixed(2).replace('.',',')}</span></div>`:''}
-  ${(o.deliveryFee||0)>0?`<div class="row"><span class="label">Taxa de Entrega</span><span class="val">R$ ${(o.deliveryFee||0).toFixed(2).replace('.',',')}</span></div>`:''}
-  <div class="total-row"><span>TOTAL</span><span style="color:#C8436A">R$ ${(o.total||0).toFixed(2).replace('.',',')}</span></div>
-</div>
-
-<div class="footer">
-  ${cfg.razao||'Laços Eternos Floricultura'}<br>
-  ${cfg.whats?'📱 '+cfg.whats:''} ${cfg.addr?'· '+cfg.addr:''}<br>
-  Gerado em ${new Date().toLocaleString('pt-BR')}
-</div>
-
-<button class="btn" onclick="window.print()">🖨️ Imprimir Comanda</button>
 </body></html>`;
 
-  // Abre em nova janela para impressão
   const w = window.open('', '_blank');
   if(w){
     w.document.open();
     w.document.write(html);
     w.document.close();
-    w.onload = ()=>{ setTimeout(()=>w.print(), 300); };
   } else {
-    // Fallback: download como HTML
     const a = document.createElement('a');
     a.href = 'data:text/html;charset=utf-8,'+encodeURIComponent(html);
     a.download = 'comanda-'+o.orderNumber+'.html';
     a.click();
-    toast('📥 Comanda salva — abra o arquivo para imprimir');
+    toast('📥 Comanda salva — abra para imprimir');
   }
   S._printedComanda = {...(S._printedComanda||{}), [orderId]:true};
+  localStorage.setItem('fv_printed_comanda', JSON.stringify(S._printedComanda));
   render();
   toast('✅ Comanda aberta!');
 }
@@ -2630,8 +2675,17 @@ async function finalizePDV(){
     S.orders.unshift(o);
     // Notifica WhatsApp (sem abrir nova tela)
     notifyWhatsApp(o);
+    // Pergunta se quer imprimir comanda
+    S._newOrderId = o._id;
     PDV={cart:[],discount:0,payment:'Pix',clientId:'',clientName:'',clientPhone:'',clientEmail:'',recipient:'',cardMessage:'',notes:'',deliveryDate:'',deliveryPeriod:'Manhã',deliveryTime:'',street:'',neighborhood:'',number:'',city:'',cep:'',reference:'',isCondominium:false,block:'',apt:'',type:'Delivery',deliveryFee:0,zone:'',clientSearch:'',pickupUnit:'',saleUnit:'',notifyClient:true,identifyClient:true,_showQuickReg:false};
-    S.loading=false;S.page='pedidos';render();toast('✅ Pedido '+o.orderNumber+' criado!');
+    S.loading=false;S.page='pedidos';render();
+    toast('✅ Pedido '+o.orderNumber+' criado!');
+    // Auto print comanda after 500ms
+    setTimeout(()=>{
+      if(confirm('✅ Pedido '+o.orderNumber+' criado!\n\n🖨️ Deseja imprimir a comanda agora?')){
+        printComanda(o._id);
+      }
+    }, 600);
   }catch(e){S.loading=false;render();}
 }
 
@@ -2943,6 +2997,9 @@ function bindPageActions(){
     document.querySelectorAll('[data-st]').forEach(b=>b.addEventListener('click',()=>{S._pdidoFilter=b.dataset.st;render();}));
     document.querySelectorAll('[data-adv]').forEach(b=>b.addEventListener('click',()=>advanceOrder(b.dataset.adv)));
     document.querySelectorAll('[data-edit-order]').forEach(b=>b.addEventListener('click',()=>showEditOrderModal(b.dataset.editOrder)));
+    document.querySelectorAll('[data-print-comanda-ped]').forEach(b=>b.addEventListener('click',()=>{
+      printComanda(b.dataset.printComandaPed);
+    }));
     document.getElementById('btn-rel-orders')?.addEventListener('click',async()=>{S.loading=true;render();S.orders=await GET('/orders');S.loading=false;render();});
   }
   // Clientes
