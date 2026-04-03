@@ -1667,22 +1667,10 @@ function printCard(orderId){
 <button class="btn" onclick="window.print()">🖨️ Imprimir Cartão</button>
 </body></html>`;
 
-  // Usa iframe oculto para imprimir sem popup
-  const iframe = document.createElement('iframe');
-  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;';
-  document.body.appendChild(iframe);
-  iframe.contentDocument.open();
-  iframe.contentDocument.write(html);
-  iframe.contentDocument.close();
-  setTimeout(()=>{
-    iframe.contentWindow.focus();
-    iframe.contentWindow.print();
-    setTimeout(()=>document.body.removeChild(iframe), 2000);
-  }, 500);
-  
+  // Mostra numa modal para imprimir
+  showPrintModal(html, 'Cartão — '+o.orderNumber);
   S._printedCard = {...(S._printedCard||{}), [orderId]:true};
   render();
-  toast('✅ Enviando para impressão...');
 }
 
 function printComanda(orderId){
@@ -1772,22 +1760,50 @@ ${o.notes?`<div class="obs">📝 <strong>Obs:</strong> ${o.notes}</div>`:''}
 <button class="btn" onclick="window.print()">🖨️ Imprimir Comanda</button>
 </body></html>`;
 
-  // Usa iframe oculto para imprimir sem popup
+  // Mostra numa modal para imprimir
+  showPrintModal(html, 'Comanda — '+o.orderNumber);
+  S._printedComanda = {...(S._printedComanda||{}), [orderId]:true};
+  render();
+}
+
+// ── PRINT MODAL ─────────────────────────────────────────────
+function showPrintModal(html, title){
+  // Cria overlay de impressão
+  const overlay = document.createElement('div');
+  overlay.id = 'print-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;';
+  
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:16px;padding:0;max-width:560px;width:94%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);';
+  
+  // Header
+  const header = document.createElement('div');
+  header.style.cssText = 'padding:16px 20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;';
+  header.innerHTML = `<span style="font-weight:600;font-size:15px">🖨️ ${title}</span>
+    <div style="display:flex;gap:8px;">
+      <button onclick="document.getElementById('print-frame').contentWindow.print()" style="background:#C8436A;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;cursor:pointer;font-weight:500;">🖨️ Imprimir</button>
+      <button onclick="document.getElementById('print-overlay').remove()" style="background:#f3f4f6;border:none;padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer;">✕ Fechar</button>
+    </div>`;
+  
+  // iframe
   const iframe = document.createElement('iframe');
-  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;';
-  document.body.appendChild(iframe);
+  iframe.id = 'print-frame';
+  iframe.style.cssText = 'flex:1;border:none;min-height:400px;';
+  
+  box.appendChild(header);
+  box.appendChild(iframe);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  
+  // Write content to iframe
   iframe.contentDocument.open();
   iframe.contentDocument.write(html);
   iframe.contentDocument.close();
-  setTimeout(()=>{
-    iframe.contentWindow.focus();
-    iframe.contentWindow.print();
-    setTimeout(()=>document.body.removeChild(iframe), 2000);
-  }, 500);
-
-  S._printedComanda = {...(S._printedComanda||{}), [orderId]:true};
-  render();
-  toast('✅ Enviando comanda para impressão...');
+  
+  // Close on overlay click
+  overlay.addEventListener('click', e=>{
+    if(e.target===overlay) overlay.remove();
+  });
 }
 
 // ── ESTOQUE MODALS ───────────────────────────────────────────
