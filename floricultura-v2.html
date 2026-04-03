@@ -264,7 +264,7 @@ let PDV = {
 const $c = v => new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v||0);
 const $d = d => d ? new Date(d).toLocaleDateString('pt-BR') : '—';
 const ini = n => n ? n.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase() : '?';
-const sc = s => ({'Entregue':'t-green','Em preparo':'t-gold','Saiu p/ entrega':'t-purple','Aguardando':'t-gray','Cancelado':'t-red','Pago':'t-green','Pendente':'t-gold','Pronto':'t-blue','Em Produção':'t-gold'}[s]||'t-gray');
+const sc = s => ({'Entregue':'t-green','Em preparo':'t-gold','Saiu p/ entrega':'t-purple','Aguardando':'t-gray','Cancelado':'t-red','Pago':'t-green','Pendente':'t-gold','Pronto':'t-blue','Em Produção':'t-gold','Pagar na Entrega':'t-gold'}[s]||'t-gray');
 const segc = s => ({'VIP':'t-rose','Recorrente':'t-green','Novo':'t-blue'}[s]||'t-gray');
 const rolec = r => ({'Administrador':'t-rose','Gerente':'t-purple','Atendimento':'t-blue','Producao':'t-green','Expedicao':'t-gold','Financeiro':'t-gray','Entregador':'t-blue'}[r]||'t-gray');
 const emoji = c => ({'Rosa':'🌹','Buquê':'💐','Orquídea':'🌸','Planta':'🌱','Kit':'🎁','Vaso':'🌿','Flor':'🌺','Coroa':'👑','Cesta':'🧺','Embalagem':'📦','Adicional':'✨'}[c]||'🌸');
@@ -715,8 +715,17 @@ function renderPDV(){
     <div class="fg"><label class="fl">Desconto (R$)</label><input class="fi" type="number" id="pdv-disc" placeholder="0" value="${PDV.discount||''}"/></div>
     <div class="fg"><label class="fl">Forma de Pgto</label>
       <select class="fi" id="pdv-pay">
-        ${['Pix','Dinheiro','Crédito','Débito','Link','Cortesia','Boleto','Faturado'].map(m=>`<option ${PDV.payment===m?'selected':''}>${m}</option>`).join('')}
+        ${['Pix','Dinheiro','Crédito','Débito','Link','Cortesia','Boleto','Faturado','Pagar na Entrega'].map(m=>`<option ${PDV.payment===m?'selected':''}>${m}</option>`).join('')}
       </select>
+      ${PDV.payment==='Pagar na Entrega'?`
+      <div style="margin-top:8px;">
+        <label class="fl">Como será pago na entrega?</label>
+        <div style="display:flex;gap:8px;margin-top:4px;">
+          <button class="btn btn-sm ${PDV.paymentOnDelivery==='Maquineta'?'btn-primary':'btn-ghost'}" data-pod="Maquineta">💳 Maquineta</button>
+          <button class="btn btn-sm ${PDV.paymentOnDelivery==='Dinheiro'?'btn-primary':'btn-ghost'}" data-pod="Dinheiro">💵 Dinheiro</button>
+        </div>
+      </div>
+      <div class="alert al-warn" style="margin-top:8px;">⚠️ Entregador receberá o valor na entrega. Constará na comanda.</div>`:''}
     </div>
   </div>
 
@@ -1641,58 +1650,69 @@ async function toggleUserActive(id, currentActive){
 // ── PRINT FUNCTIONS ─────────────────────────────────────────
 function printCard(orderId){
   const o = S.orders.find(x=>x._id===orderId);
-  if(!o) return;
+  if(!o) return toast('❌ Pedido não encontrado');
   const cfg = JSON.parse(localStorage.getItem('fv_config')||'{}');
-  const layout = JSON.parse(localStorage.getItem('fv_print_layout')||'{"cardCor":"#C8436A","cardFonte":"Georgia","cardTamanho":"16","cardMostrarLogo":true,"cardMostrarRemetente":true,"nomeEmpresa":"Laços Eternos"}');
-  
-  const html = `<!DOCTYPE html>
-<html><head><title>Cartão — ${o.orderNumber}</title>
-<meta charset="utf-8"/>
-<style>
-  *{margin:0;padding:0;box-sizing:border-box;}
-  body{font-family:'${layout.cardFonte||'Georgia'}',serif;background:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;}
-  .card{border:2px solid ${layout.cardCor||'#C8436A'};border-radius:16px;padding:32px;max-width:360px;width:100%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.1);}
-  .flor{font-size:36px;margin-bottom:12px;}
-  .logo{font-size:16px;color:${layout.cor||'#C8436A'};font-weight:bold;margin-bottom:20px;letter-spacing:1px;}
-  .para{font-size:13px;color:#666;margin-bottom:6px;}
-  .dest{font-size:18px;font-weight:bold;color:#1A0A10;margin-bottom:20px;}
-  .msg{font-size:${layout.cardTamanho||'16'}px;line-height:1.8;color:#2D1A20;font-style:italic;margin-bottom:20px;padding:16px;background:#FDF4F7;border-radius:8px;}
-  .de{font-size:13px;color:#9E8090;margin-top:16px;}
-  .btn{display:block;margin:20px auto 0;background:${layout.cor||'#C8436A'};color:#fff;border:none;padding:10px 28px;border-radius:8px;font-size:14px;cursor:pointer;}
-  @media print{.btn{display:none!important}body{min-height:auto}}
-</style></head>
-<body>
-<div class="card">
-  <div class="flor">🌺</div>
-  <div class="logo">${cfg.razao||'Laços Eternos'}</div>
-  <div class="para">Para:</div>
-  <div class="dest">${o.recipient||'—'}</div>
-  <div class="msg">"${(o.cardMessage||'Com muito carinho! 🌸').replace(/"/g,'&quot;')}"</div>
-  ${o.identifyClient!==false?`<div class="de">💌 Com carinho de: <strong>${o.client?.name||o.clientName||'—'}</strong></div>`:'<div class="de">💝</div>'}
-</div>
-<button class="btn" onclick="window.print()">🖨️ Imprimir Cartão</button>
-</body></html>`;
+  const layout = JSON.parse(localStorage.getItem('fv_print_layout')||'{}');
+  const cor = layout.cardCor||'#C8436A';
+  const fonte = layout.cardFonte||'Georgia';
+  const tam = layout.cardTamanho||'16';
+  const empresa = layout.nomeEmpresa||cfg.razao||'Laços Eternos Floricultura';
 
-  // Abre em nova janela para impressão
-  const w = window.open('', '_blank');
-  if(w){
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-    w.onload = ()=>{ setTimeout(()=>w.print(), 300); };
-  } else {
-    // Fallback: download como HTML
-    const a = document.createElement('a');
-    a.href = 'data:text/html;charset=utf-8,'+encodeURIComponent(html);
-    a.download = 'cartao-'+o.orderNumber+'.html';
-    a.click();
-    toast('📥 Cartão salvo — abra o arquivo para imprimir');
-  }
+  const cardHtml = `
+    <div style="border:2px solid ${cor};border-radius:16px;padding:32px;max-width:360px;margin:0 auto;text-align:center;font-family:${fonte},serif;background:#fff;">
+      ${layout.cardMostrarLogo!==false?`<div style="font-size:14px;color:${cor};font-weight:bold;margin-bottom:12px;letter-spacing:1px;">${empresa.toUpperCase()}</div>`:''}
+      <div style="font-size:28px;margin-bottom:12px;">🌺</div>
+      <div style="font-size:13px;color:#666;margin-bottom:4px;">PARA:</div>
+      <div style="font-size:20px;font-weight:bold;margin-bottom:20px;color:#1A0A10;">${(o.recipient||'—').toUpperCase()}</div>
+      <div style="font-size:${tam}px;font-style:italic;color:#2D1A20;line-height:1.8;padding:16px;background:#FDF4F7;border-radius:8px;margin-bottom:16px;">"${o.cardMessage||'Com muito carinho! 🌸'}"</div>
+      ${layout.cardMostrarRemetente!==false&&o.identifyClient!==false?`<div style="font-size:13px;color:#9E8090;">💌 COM CARINHO DE: <strong>${(o.client?.name||o.clientName||'—').toUpperCase()}</strong></div>`:'<div style="font-size:20px;">💝</div>'}
+    </div>`;
+
+  // Show in print modal
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;padding:20px;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:16px;width:100%;max-width:480px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.4);">
+      <div style="padding:16px 20px;background:${cor};display:flex;justify-content:space-between;align-items:center;">
+        <span style="color:#fff;font-weight:bold;font-size:15px;">💌 Cartão — ${o.orderNumber}</span>
+        <div style="display:flex;gap:8px;">
+          <button onclick="window.print()" style="background:#fff;color:${cor};border:none;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:bold;cursor:pointer;">🖨️ IMPRIMIR</button>
+          <button onclick="this.closest('[data-overlay]').remove()" style="background:rgba(255,255,255,0.2);color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:16px;">✕</button>
+        </div>
+      </div>
+      <div style="padding:24px;" id="card-preview-content">
+        ${cardHtml}
+      </div>
+    </div>`;
+  overlay.setAttribute('data-overlay','true');
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  // Add print styles
+  const style = document.createElement('style');
+  style.id = 'print-style-card';
+  style.textContent = `@media print { 
+    body > *:not([data-overlay]) { display:none!important; }
+    [data-overlay] { position:fixed!important;inset:0!important;background:#fff!important;display:flex!important;align-items:center!important;justify-content:center!important; }
+    [data-overlay] > div > div:first-child { display:none!important; }
+    #card-preview-content { padding:20px!important; }
+  }`;
+  document.head.appendChild(style);
+  
+  overlay.querySelector('[onclick="window.print()"]').addEventListener('click', ()=>{
+    window.print();
+    setTimeout(()=>{ document.getElementById('print-style-card')?.remove(); }, 1000);
+  });
+  overlay.querySelector('[onclick*="remove"]').addEventListener('click', ()=>{ 
+    overlay.remove(); 
+    document.getElementById('print-style-card')?.remove();
+  });
+
   S._printedCard = {...(S._printedCard||{}), [orderId]:true};
   localStorage.setItem('fv_printed_card', JSON.stringify(S._printedCard));
   render();
-  toast('✅ Cartão aberto!');
 }
+
 
 function printComanda(orderId){
   const o = S.orders.find(x=>x._id===orderId);
@@ -1712,8 +1732,8 @@ function printComanda(orderId){
     return `<div style="display:flex;align-items:center;gap:12px;padding:10px;background:#f9f9f9;border-radius:8px;margin-bottom:8px;">
       ${imgTag}
       <div>
-        <div style="font-size:15px;font-weight:bold;color:#1A0A10">${i.qty}x ${i.name}</div>
-        ${prod?.productionNotes?`<div style="font-size:12px;color:#666;margin-top:3px">📋 ${prod.productionNotes}</div>`:''}
+        <div style="font-size:16px;font-weight:bold;color:#1A0A10;text-transform:uppercase;letter-spacing:0.5px;">${i.qty}X ${String(i.name).toUpperCase()}</div>
+        ${prod?.productionNotes?`<div style="font-size:12px;color:#666;margin-top:3px;text-transform:uppercase;">📋 ${String(prod.productionNotes).toUpperCase()}</div>`:''}
       </div>
     </div>`;
   }).join('');
@@ -1728,15 +1748,18 @@ function printComanda(orderId){
   }));
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${qrData}`;
 
+  // Helper to uppercase all text in comanda
+  const UC = s => s ? String(s).toUpperCase() : '—';
+
   // Single comanda block (will be duplicated)
   const comandaBlock = (tipo) => `
-  <div style="padding:20px;font-family:Arial,sans-serif;font-size:13px;color:#1A0A10;box-sizing:border-box;width:100%;">
+  <div style="padding:20px;font-family:Arial,sans-serif;font-size:13px;color:#1A0A10;box-sizing:border-box;width:100%;text-transform:uppercase;letter-spacing:0.3px;">
     
     <!-- HEADER -->
     <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid ${cor};padding-bottom:12px;margin-bottom:14px;">
       <div>
-        <div style="font-size:18px;font-weight:bold;color:${cor}">🌺 ${empresa}</div>
-        <div style="font-size:11px;color:#666;margin-top:2px">${whats}</div>
+        <div style="font-size:18px;font-weight:bold;color:${cor}">${UC(empresa)}</div>
+        <div style="font-size:11px;color:#666;margin-top:2px;text-transform:none;">${whats}</div>
       </div>
       <div style="text-align:right;">
         <div style="font-size:22px;font-weight:bold;color:${cor}">${o.orderNumber}</div>
@@ -1746,30 +1769,69 @@ function printComanda(orderId){
 
     <!-- PRODUTO(S) COM FOTO -->
     <div style="margin-bottom:14px;">
-      <div style="font-size:11px;font-weight:bold;color:${cor};text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">📦 Produto(s)</div>
+      <div style="font-size:11px;font-weight:bold;color:${cor};letter-spacing:1px;margin-bottom:8px;">📦 PRODUTO(S)</div>
       ${itemsHtml}
     </div>
 
     <!-- DADOS DE ENTREGA -->
     <div style="background:#f5f5f5;border-radius:8px;padding:12px;margin-bottom:12px;">
-      <div style="font-size:11px;font-weight:bold;color:${cor};text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">📍 Dados de Entrega</div>
-      <table style="width:100%;font-size:12px;border-collapse:collapse;">
-        <tr><td style="color:#666;padding:3px 0;width:110px;">Data:</td><td style="font-weight:600">${o.scheduledDate?new Date(o.scheduledDate).toLocaleDateString('pt-BR'):'—'}</td></tr>
-        <tr><td style="color:#666;padding:3px 0;">Turno:</td><td style="font-weight:600">${o.scheduledPeriod||'—'} ${o.scheduledTime||''}</td></tr>
-        <tr><td style="color:#666;padding:3px 0;">Destinatário:</td><td style="font-weight:600">${o.recipient||'—'}</td></tr>
-        <tr><td style="color:#666;padding:3px 0;">Endereço:</td><td style="font-weight:600">${o.deliveryStreet||''} ${o.deliveryNumber||''}</td></tr>
-        ${o.deliveryNeighborhood?`<tr><td style="color:#666;padding:3px 0;">Bairro:</td><td style="font-weight:600">${o.deliveryNeighborhood}</td></tr>`:''}
-        ${o.isCondominium?`<tr><td style="color:#666;padding:3px 0;">Cond.:</td><td style="font-weight:600">Bloco ${o.block} — Ap ${o.apt}</td></tr>`:''}
-        ${o.deliveryReference?`<tr><td style="color:#666;padding:3px 0;">Referência:</td><td style="font-weight:600">${o.deliveryReference}</td></tr>`:''}
-        <tr><td style="color:#666;padding:3px 0;">WhatsApp:</td><td style="font-weight:600">${o.clientPhone||o.client?.phone||'—'}</td></tr>
-        ${o.notes?`<tr><td style="color:#666;padding:3px 0;">Obs:</td><td style="font-weight:600;color:#B7860F">${o.notes}</td></tr>`:''}
+      <div style="font-size:11px;font-weight:bold;color:${cor};letter-spacing:1px;margin-bottom:10px;">📍 DADOS DE ENTREGA</div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        <tr style="border-bottom:1px solid #e0e0e0;">
+          <td style="color:#888;padding:6px 0;width:110px;font-size:11px;">DATA:</td>
+          <td style="font-weight:700;font-size:14px;color:#1A0A10;">${UC(o.scheduledDate?new Date(o.scheduledDate).toLocaleDateString('pt-BR'):'NÃO INFORMADA')}</td>
+        </tr>
+        <tr style="border-bottom:1px solid #e0e0e0;">
+          <td style="color:#888;padding:6px 0;font-size:11px;">TURNO:</td>
+          <td style="font-weight:700;font-size:14px;color:#1A0A10;">${UC(o.scheduledPeriod||'NÃO INFORMADO')} ${o.scheduledTime?'— '+o.scheduledTime:''}</td>
+        </tr>
+        <tr style="border-bottom:2px solid ${cor};">
+          <td style="color:#888;padding:6px 0;font-size:11px;">DESTINATÁRIO:</td>
+          <td style="font-weight:800;font-size:16px;color:${cor};">${UC(o.recipient||o.client?.name||o.clientName||'NÃO INFORMADO')}</td>
+        </tr>
+        <tr style="border-bottom:1px solid #e0e0e0;">
+          <td style="color:#888;padding:6px 0;font-size:11px;">ENDEREÇO:</td>
+          <td style="font-weight:700;font-size:13px;">${UC((o.deliveryStreet||'')+(o.deliveryNumber?' Nº '+o.deliveryNumber:''))}</td>
+        </tr>
+        ${o.deliveryNeighborhood?`
+        <tr style="border-bottom:1px solid #e0e0e0;">
+          <td style="color:#888;padding:6px 0;font-size:11px;">BAIRRO:</td>
+          <td style="font-weight:900;font-size:18px;color:${cor};">${UC(o.deliveryNeighborhood)}</td>
+        </tr>`:''}
+        ${o.isCondominium?`
+        <tr style="border-bottom:1px solid #e0e0e0;">
+          <td style="color:#888;padding:6px 0;font-size:11px;">CONDOMÍNIO:</td>
+          <td style="font-weight:700;">BLOCO ${UC(o.block)} — AP ${UC(o.apt)}</td>
+        </tr>`:''}
+        ${o.deliveryReference?`
+        <tr style="border-bottom:1px solid #e0e0e0;">
+          <td style="color:#888;padding:6px 0;font-size:11px;">REFERÊNCIA:</td>
+          <td style="font-weight:600;">${UC(o.deliveryReference)}</td>
+        </tr>`:''}
+        <tr>
+          <td style="color:#888;padding:6px 0;font-size:11px;">WHATSAPP:</td>
+          <td style="font-weight:600;text-transform:none;">${o.clientPhone||o.client?.phone||'—'}</td>
+        </tr>
+        ${o.notes?`
+        <tr>
+          <td style="color:#888;padding:6px 0;font-size:11px;">OBS:</td>
+          <td style="font-weight:700;color:#B7860F;">${UC(o.notes)}</td>
+        </tr>`:''}
+        ${o.payment==='Pagar na Entrega'?`
+        <tr style="background:#FFF8E1;">
+          <td colspan="2" style="padding:8px 6px;">
+            <div style="background:#B7860F;color:#fff;padding:8px 12px;border-radius:6px;font-size:14px;font-weight:900;text-align:center;letter-spacing:1px;">
+              💰 COBRAR NA ENTREGA: R$ ${(o.total||0).toFixed(2).replace('.',',')} — ${UC(o.paymentOnDelivery||'MAQUINETA')}
+            </div>
+          </td>
+        </tr>`:''}
       </table>
     </div>
 
     ${o.cardMessage?`
-    <div style="background:#FDF4F7;border-left:4px solid ${cor};padding:10px;border-radius:0 8px 8px 0;margin-bottom:12px;font-style:italic;font-size:12px;">
-      💌 <strong>Cartão:</strong> "${o.cardMessage}"
-      ${o.identifyClient!==false?`<br><span style="color:#9E8090;font-size:11px">De: ${o.client?.name||o.clientName||'—'}</span>`:''}
+    <div style="background:#FDF4F7;border-left:4px solid ${cor};padding:10px;border-radius:0 8px 8px 0;margin-bottom:12px;font-size:12px;text-transform:none;">
+      💌 <strong>CARTÃO:</strong> "${o.cardMessage}"
+      ${o.identifyClient!==false?`<br><span style="color:#9E8090;font-size:11px">DE: ${UC(o.client?.name||o.clientName||'—')}</span>`:''}
     </div>`:''}
 
     <!-- QR CODE + ASSINATURA (só na via do entregador) -->
@@ -1777,17 +1839,17 @@ function printComanda(orderId){
     <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:10px;padding-top:10px;border-top:1px dashed #ccc;">
       <div style="text-align:center;">
         <img src="${qrUrl}" style="width:100px;height:100px;" onerror="this.style.display='none'"/>
-        <div style="font-size:10px;color:#666;margin-top:4px;">QR — Confirmar Entrega</div>
+        <div style="font-size:10px;color:#666;margin-top:4px;text-transform:none;">QR — CONFIRMAR ENTREGA</div>
       </div>
       <div style="flex:1;margin-left:20px;">
-        <div style="border-bottom:1px solid #999;height:50px;margin-bottom:6px;"></div>
-        <div style="font-size:11px;color:#666;text-align:center;">Assinatura / Nome de quem recebeu</div>
-        <div style="border-bottom:1px solid #999;height:30px;margin-top:10px;margin-bottom:6px;"></div>
-        <div style="font-size:11px;color:#666;text-align:center;">Data e Hora da Entrega</div>
+        <div style="border-bottom:2px solid #333;height:50px;margin-bottom:6px;"></div>
+        <div style="font-size:11px;color:#666;text-align:center;">ASSINATURA / NOME DE QUEM RECEBEU</div>
+        <div style="border-bottom:2px solid #333;height:30px;margin-top:14px;margin-bottom:6px;"></div>
+        <div style="font-size:11px;color:#666;text-align:center;">DATA E HORA DA ENTREGA</div>
       </div>
     </div>`:`
-    <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #ccc;font-size:11px;color:#666;text-align:center;">
-      Gerado em ${new Date().toLocaleString('pt-BR')} · ${empresa}
+    <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #ccc;font-size:10px;color:#666;text-align:center;text-transform:none;">
+      GERADO EM ${new Date().toLocaleString('pt-BR')} · ${UC(empresa)}
     </div>`}
   </div>`;
 
@@ -1822,63 +1884,58 @@ function printComanda(orderId){
 </div>
 </body></html>`;
 
-  const w = window.open('', '_blank');
-  if(w){
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-  } else {
-    const a = document.createElement('a');
-    a.href = 'data:text/html;charset=utf-8,'+encodeURIComponent(html);
-    a.download = 'comanda-'+o.orderNumber+'.html';
-    a.click();
-    toast('📥 Comanda salva — abra para imprimir');
-  }
+  // Show comanda in overlay
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto;';
+  overlay.setAttribute('data-overlay','true');
+  
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:16px;width:100%;max-width:680px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.4);margin:auto;';
+  box.innerHTML = `
+    <div style="padding:16px 20px;background:${cor};display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10;">
+      <span style="color:#fff;font-weight:bold;font-size:15px;">🧾 Comanda — ${o.orderNumber}</span>
+      <div style="display:flex;gap:8px;">
+        <button id="btn-do-print" style="background:#fff;color:${cor};border:none;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:bold;cursor:pointer;">🖨️ IMPRIMIR</button>
+        <button id="btn-close-overlay" style="background:rgba(255,255,255,0.2);color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:16px;">✕</button>
+      </div>
+    </div>
+    <div id="comanda-preview" style="padding:20px;background:#f5f5f5;">
+      <div style="background:#fff;border-radius:8px;overflow:hidden;">
+        ${html.replace(/<button[^>]*>.*?<\/button>/gs,'').replace(/<style>[\s\S]*?<\/style>/,'').replace(/<!DOCTYPE html>[\s\S]*?<body>/,'').replace(/<\/body>[\s\S]*/,'')}
+      </div>
+    </div>`;
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) { overlay.remove(); document.getElementById('print-style-comanda')?.remove(); }});
+
+  // Add print styles  
+  const style = document.createElement('style');
+  style.id = 'print-style-comanda';
+  style.textContent = `@media print {
+    body > *:not([data-overlay]) { display:none!important; }
+    [data-overlay] { position:fixed!important;inset:0!important;background:#fff!important;overflow:visible!important;padding:0!important; }
+    [data-overlay] > div { box-shadow:none!important;border-radius:0!important;max-width:100%!important; }
+    [data-overlay] > div > div:first-child { display:none!important; }
+    #comanda-preview { padding:0!important;background:#fff!important; }
+    .half { height:50vh!important; }
+  }`;
+  document.head.appendChild(style);
+
+  document.getElementById('btn-do-print')?.addEventListener('click', ()=>{
+    window.print();
+    setTimeout(()=>document.getElementById('print-style-comanda')?.remove(), 1000);
+  });
+  document.getElementById('btn-close-overlay')?.addEventListener('click', ()=>{
+    overlay.remove();
+    document.getElementById('print-style-comanda')?.remove();
+  });
+
   S._printedComanda = {...(S._printedComanda||{}), [orderId]:true};
   localStorage.setItem('fv_printed_comanda', JSON.stringify(S._printedComanda));
   render();
-  toast('✅ Comanda aberta!');
 }
 
-// ── PRINT MODAL ─────────────────────────────────────────────
-function showPrintModal(html, title){
-  // Cria overlay de impressão
-  const overlay = document.createElement('div');
-  overlay.id = 'print-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;';
-  
-  const box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:16px;padding:0;max-width:560px;width:94%;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);';
-  
-  // Header
-  const header = document.createElement('div');
-  header.style.cssText = 'padding:16px 20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;';
-  header.innerHTML = `<span style="font-weight:600;font-size:15px">🖨️ ${title}</span>
-    <div style="display:flex;gap:8px;">
-      <button onclick="document.getElementById('print-frame').contentWindow.print()" style="background:#C8436A;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;cursor:pointer;font-weight:500;">🖨️ Imprimir</button>
-      <button onclick="document.getElementById('print-overlay').remove()" style="background:#f3f4f6;border:none;padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer;">✕ Fechar</button>
-    </div>`;
-  
-  // iframe
-  const iframe = document.createElement('iframe');
-  iframe.id = 'print-frame';
-  iframe.style.cssText = 'flex:1;border:none;min-height:400px;';
-  
-  box.appendChild(header);
-  box.appendChild(iframe);
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-  
-  // Write content to iframe
-  iframe.contentDocument.open();
-  iframe.contentDocument.write(html);
-  iframe.contentDocument.close();
-  
-  // Close on overlay click
-  overlay.addEventListener('click', e=>{
-    if(e.target===overlay) overlay.remove();
-  });
-}
 
 // ── ESTOQUE MODALS ───────────────────────────────────────────
 function showFinModal(type){
@@ -2662,6 +2719,7 @@ async function finalizePDV(){
     block:PDV.block,apt:PDV.apt,
     source:'PDV',
     unit:orderUnit,
+    paymentOnDelivery: PDV.payment==='Pagar na Entrega' ? PDV.paymentOnDelivery : undefined,
     deliveryFee:PDV.deliveryFee||0,
     deliveryZone:PDV.zone,
     deliveryCity:PDV.city,
@@ -2978,6 +3036,7 @@ function bindPageActions(){
     document.querySelectorAll('[data-inc]').forEach(b=>b.addEventListener('click',()=>{const id=b.dataset.inc;PDV.cart=PDV.cart.map(i=>i.id===id?{...i,qty:i.qty+1}:i);render();}));
     document.querySelectorAll('[data-type]').forEach(b=>b.addEventListener('click',()=>{PDV.type=b.dataset.type;render();}));
     document.getElementById('pdv-condo')?.addEventListener('change',e=>{PDV.isCondominium=e.target.checked;render();});
+    document.querySelectorAll('[data-pod]').forEach(b=>b.addEventListener('click',()=>{PDV.paymentOnDelivery=b.dataset.pod;render();}));
     document.getElementById('pdv-sale-unit')?.addEventListener('change',e=>{PDV.saleUnit=e.target.value;});
     document.getElementById('pdv-sale-unit')?.addEventListener('change',e=>{PDV.saleUnit=e.target.value;});
     document.getElementById('pdv-notify')?.addEventListener('change',e=>{PDV.notifyClient=e.target.checked;});
